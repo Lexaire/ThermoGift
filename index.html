@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ThermoGift</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <nav class="app-nav" aria-label="App navigation">
+        <a href="./" class="brand-title">ThermoGift</a>
+        <div>
+          <button id="backToPuzzle" class="ghost-button" type="button" hidden>Back to puzzle</button>
+          <button id="createMode" class="ghost-button" type="button">Create your own</button>
+        </div>
+      </nav>
+
+      <section class="topbar" id="creatorPanel" aria-label="Puzzle creator">
+        <p class="creator-intro">Create a thermometer puzzle that unlocks a 5-character SteamGifts code when solved.</p>
+        <p class="creator-message" id="creatorMessage" role="status" aria-live="polite"></p>
+
+        <form id="creator" class="creator">
+          <label>
+            Difficulty
+            <select id="difficulty">
+              <option value="tiny">Tiny 4x4</option>
+              <option value="easy">Easy 6x6</option>
+              <option value="normal" selected>Normal 8x8</option>
+              <option value="hard">Hard 10x10</option>
+              <option value="expert">Expert 12x12</option>
+              <option value="brutal">Brutal 15x15</option>
+            </select>
+          </label>
+          <label>
+            Thermometers
+            <select id="shapeStyle">
+              <option value="curved" selected>Curved</option>
+              <option value="straight">Straight only</option>
+            </select>
+          </label>
+          <label>
+            SG code
+            <input id="giftCode" maxlength="5" pattern="[A-Za-z0-9]{5}" placeholder="Abcd3" required />
+          </label>
+          <button type="submit">Create link</button>
+        </form>
+      </section>
+
+      <section class="link-panel" id="linkPanel" hidden>
+        <label>
+          Puzzle link
+          <input id="shareLink" readonly />
+        </label>
+        <button id="copyLink" type="button">Copy</button>
+        <button id="openPuzzle" type="button">Open</button>
+      </section>
+
+      <section class="game" id="gamePanel" aria-label="Thermometer puzzle" hidden>
+        <aside class="status">
+          <div>
+            <span class="label">Puzzle</span>
+            <strong id="puzzleName">Create or open a link</strong>
+          </div>
+          <div>
+            <span class="label">Progress</span>
+            <strong id="progressText">0%</strong>
+          </div>
+          <button id="resetPuzzle" type="button">Reset grid</button>
+        </aside>
+
+        <div class="board-wrap">
+          <div class="col-clues" id="colClues" aria-hidden="true"></div>
+          <div class="row-area">
+            <div class="row-clues" id="rowClues" aria-hidden="true"></div>
+            <div class="board" id="board" aria-label="Puzzle grid"></div>
+            <div class="row-clues" id="rowCluesRight" aria-hidden="true" style="visibility: hidden;"></div>
+          </div>
+          <p class="hint" id="hintText">Creator links will appear above. Open one to play the puzzle.</p>
+        </div>
+      </section>
+
+      <section class="rules-panel" id="rulesPanel" hidden>
+        <span class="label">Rules</span>
+        <p>Fill thermometers from the round bulb toward the rounded tip. A later segment cannot be filled unless every segment before it is filled. The numbers above and beside the grid tell how many red cells belong in that column or row. Right-click a cell to mark an X. When every count matches and the thermometers obey the rule, the solved grid unlocks the giveaway code.</p>
+      </section>
+
+      <dialog id="winDialog">
+        <h2>Giveaway unlocked</h2>
+        <p>Your solved grid decodes to:</p>
+        <a id="giftLink" target="_blank" rel="noreferrer"></a>
+        <form method="dialog">
+          <button>Close</button>
+        </form>
+      </dialog>
+    </main>
+
+    <script src="./src/app.js" type="module"></script>
+  </body>
+</html>
