@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   --ink: #111111;
   --muted: #666666;
   --line: #d8d8d8;
@@ -12,8 +12,33 @@
   --accent: #d7352a;
   --clue: #333333;
   --clue-met: #c4c4c4;
+  --button-hover: #263229;
+  --cell-hover: #dcdcdc;
+  --cell-filled-border: #c9c9c9;
+  --x-mark: #7a7a7a;
   --cell: 48px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e8e8;
+    --muted: #9a9a9a;
+    --line: #2e2e2e;
+    --panel: #1a1a1a;
+    --paper: #0f0f0f;
+    --fill: #b8443a;
+    --tube: #e8e8e8;
+    --tube-empty: #0f0f0f;
+    --warn: #e8e8e8;
+    --accent: #b8443a;
+    --clue: #cfcfcf;
+    --clue-met: #4a4a4a;
+    --button-hover: #cfcfcf;
+    --cell-hover: #242424;
+    --cell-filled-border: #3a3a3a;
+    --x-mark: #8a8a8a;
+  }
 }
 
 * {
@@ -40,18 +65,18 @@ select {
 button {
   border: 1px solid var(--ink);
   background: var(--ink);
-  color: white;
+  color: var(--paper);
   border-radius: 6px;
   padding: 0.7rem 0.9rem;
   cursor: pointer;
 }
 
 button:hover {
-  background: #263229;
+  background: var(--button-hover);
 }
 
 .ghost-button {
-  background: white;
+  background: var(--paper);
   color: var(--ink);
 }
 
@@ -164,7 +189,7 @@ select {
   min-height: 44px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: white;
+  background: var(--paper);
   color: var(--ink);
   padding: 0.55rem 0.7rem;
 }
@@ -288,7 +313,7 @@ select {
   width: var(--cell);
   height: var(--cell);
   border: 1px solid var(--line);
-  background: white;
+  background: var(--paper);
   border-radius: 6px;
   position: relative;
   cursor: pointer;
@@ -297,7 +322,7 @@ select {
 
 .cell:hover {
   border-color: var(--fill);
-  background: #dcdcdc;
+  background: var(--cell-hover);
 }
 
 .thermo-svg {
@@ -355,7 +380,7 @@ select {
 }
 
 .cell.filled {
-  border-color: #c9c9c9;
+  border-color: var(--cell-filled-border);
 }
 
 .x-mark {
@@ -364,12 +389,12 @@ select {
   z-index: 2;
   display: grid;
   place-items: center;
-  color: #7a7a7a;
+  color: var(--x-mark);
   font-size: calc(var(--cell) * 0.5);
   font-weight: 900;
   line-height: 1;
   pointer-events: none;
-  text-shadow: 0 1px 0 white, 1px 0 0 white, 0 -1px 0 white, -1px 0 0 white;
+  text-shadow: 0 1px 0 var(--paper), 1px 0 0 var(--paper), 0 -1px 0 var(--paper), -1px 0 0 var(--paper);
 }
 
 .met {
