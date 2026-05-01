@@ -6,14 +6,19 @@ import {
   checksumFor,
 } from "./generator.js";
 
+/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, creatingTimer: any }} */
 const state = {
   puzzle: null,
   marks: new Set(),
   xMarks: new Set(),
   dragging: null,
+  touchPending: null,
   lastCreatedId: null,
   creatingTimer: null,
 };
+
+const LONG_PRESS_MS = 350;
+const TOUCH_MOVE_THRESHOLD_PX = 10;
 
 const els = {
   creatorPanel: document.querySelector("#creatorPanel"),
@@ -143,7 +148,18 @@ els.resetPuzzle.addEventListener("click", () => {
 
 window.addEventListener("pointerup", () => {
   state.dragging = null;
+  cancelTouchPending();
 });
+
+window.addEventListener("pointercancel", () => {
+  state.dragging = null;
+  cancelTouchPending();
+});
+
+function cancelTouchPending() {
+  if (state.touchPending?.timer) clearTimeout(state.touchPending.timer);
+  state.touchPending = null;
+}
 
 function loadFromLocation() {
   const id = new URLSearchParams(window.location.search).get("id");
@@ -318,12 +334,42 @@ function renderPuzzle() {
     button.ariaLabel = `Row ${Math.floor(index / puzzle.size) + 1}, column ${(index % puzzle.size) + 1}`;
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
+      if (state.touchPending || event.pointerType === "touch") return;
       toggleXMark(index);
     });
     button.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
+      if (event.pointerType === "touch") {
+        if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
+          event.target.releasePointerCapture(event.pointerId);
+        }
+        cancelTouchPending();
+        const timer = window.setTimeout(() => {
+          if (!state.touchPending) return;
+          state.touchPending.fired = true;
+          toggleXMark(state.touchPending.index);
+        }, LONG_PRESS_MS);
+        state.touchPending = { index, meta, startX: event.clientX, startY: event.clientY, timer, fired: false };
+        return;
+      }
       state.dragging = markMode(meta);
       setThermoMark(meta, state.dragging);
+    });
+    button.addEventListener("pointermove", (event) => {
+      if (event.pointerType !== "touch" || !state.touchPending) return;
+      const dx = event.clientX - state.touchPending.startX;
+      const dy = event.clientY - state.touchPending.startY;
+      if (dx * dx + dy * dy < TOUCH_MOVE_THRESHOLD_PX * TOUCH_MOVE_THRESHOLD_PX) return;
+      cancelTouchPending();
+    });
+    button.addEventListener("pointerup", (event) => {
+      if (event.pointerType !== "touch") return;
+      const pending = state.touchPending;
+      if (!pending || pending.fired) return;
+      cancelTouchPending();
+      if (pending.index !== index || !pending.meta) return;
+      const mode = markMode(pending.meta);
+      setThermoMark(pending.meta, mode);
     });
     button.addEventListener("pointerenter", (event) => {
       if (event.buttons === 1 && state.dragging !== null) setThermoMark(meta, state.dragging);
