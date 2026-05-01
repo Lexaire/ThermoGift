@@ -4,6 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>ThermoGift</title>
+    <script>
+      (function () {
+        var t = localStorage.getItem("thermogift:theme");
+        if (t === "light" || t === "dark") {
+          document.documentElement.setAttribute("data-theme", t);
+        }
+      })();
+    </script>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -84,6 +92,23 @@
         <span class="label">Rules</span>
         <p>Fill thermometers from the round bulb toward the rounded tip. A later segment cannot be filled unless every segment before it is filled. The numbers above and beside the grid tell how many red cells belong in that column or row. Right-click a cell to mark an X. When every count matches and the thermometers obey the rule, the solved grid unlocks the giveaway code.</p>
       </section>
+
+      <footer class="page-footer">
+        <button id="themeToggle" class="ghost-button theme-toggle" type="button" aria-label="Theme: auto">
+          <svg data-icon="auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 3v18" />
+            <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" stroke="none" />
+          </svg>
+          <svg data-icon="light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" />
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+          </svg>
+          <svg data-icon="dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" />
+          </svg>
+        </button>
+      </footer>
 
       <dialog id="winDialog">
         <h2>Giveaway unlocked</h2>

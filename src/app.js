@@ -45,7 +45,36 @@ const els = {
   resetPuzzle: document.querySelector("#resetPuzzle"),
   winDialog: document.querySelector("#winDialog"),
   giftLink: document.querySelector("#giftLink"),
+  themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
 };
+
+/** @type {readonly ("auto" | "light" | "dark")[]} */
+const THEME_CYCLE = ["auto", "light", "dark"];
+
+/** @param {"auto" | "light" | "dark"} theme */
+function applyTheme(theme) {
+  if (theme === "auto") {
+    document.documentElement.removeAttribute("data-theme");
+  } else {
+    document.documentElement.setAttribute("data-theme", theme);
+  }
+  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length];
+  els.themeToggle.setAttribute("aria-label", `Theme: ${theme} (click for ${next})`);
+  els.themeToggle.title = `Theme: ${theme}`;
+}
+
+function currentTheme() {
+  const t = localStorage.getItem("thermogift:theme");
+  return t === "light" || t === "dark" || t === "auto" ? t : "auto";
+}
+
+applyTheme(currentTheme());
+
+els.themeToggle.addEventListener("click", () => {
+  const next = THEME_CYCLE[(THEME_CYCLE.indexOf(currentTheme()) + 1) % THEME_CYCLE.length];
+  localStorage.setItem("thermogift:theme", next);
+  applyTheme(next);
+});
 
 const savedDifficulty = localStorage.getItem("thermogift:difficulty");
 if (savedDifficulty && [...els.difficulty.options].some((opt) => opt.value === savedDifficulty)) {

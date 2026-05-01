@@ -325,8 +325,13 @@ export function countSolutionsCtx(ctx, rowClues, colClues, limit, maxNodes = 120
       for (let i = 0; i < size; i += 1) {
         const rc = rowCounts[i];
         const cc = colCounts[i];
-        if (rc > rowClues[i] || rc + rowRemaining[i] < rowClues[i] ||
-            cc > colClues[i] || cc + colRemaining[i] < colClues[i]) { possible = false; break; }
+        const rr = rowRemaining[i];
+        const cr = colRemaining[i];
+        if (rc > rowClues[i] || rc + rr < rowClues[i] ||
+            cc > colClues[i] || cc + cr < colClues[i]) { possible = false; break; }
+        // Exact checks: when all cells in a row/col are assigned, it must match the clue
+        if (rr === 0 && rc !== rowClues[i]) { possible = false; break; }
+        if (cr === 0 && cc !== colClues[i]) { possible = false; break; }
       }
       if (possible) search(depth + 1);
     }
