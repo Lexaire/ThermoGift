@@ -571,3 +571,205 @@ export function hashString(value) {
   }
   return hash >>> 0;
 }
+
+// === t2 format ===
+// Layout (bit stream, base64 alphabet = ID_ALPHABET):
+//   4 bits         minor version (= 0)
+//   varint         size                     // board side, 4..64
+//   varint         shapeIdx                 // index into SHAPE_STYLES
+//   varint         variant                  // 0 = thermometers
+//   per cell:      1-bit bulb flag, 2-bit dir if !bulb
+//   per thermo:    varint fillLength
+//   varint         cipherByteLen            // 0..4096
+//   N × 8 bits     cipher bytes
+//   16 bits        checksum
+//   varint         trailerBitCount          // 0 at minor=0
+//   trailerBitCount bits  trailer payload (skipped at minor=0)
+//
+// Varint: k unary 1s, terminating 0, then (k+1)*4 value bits.
+// Future-proofing:
+//   - Presentation extensions (hidden clues, given-number hints, etc.) go in
+//     the trailer with a must-understand bit. Old decoders skip them.
+//   - Structural changes (per-cell layout, new variants) bump `minor` or
+//     `variant` so old decoders refuse instead of misrendering.
+
+export const T2_VERSION_MINOR = 0;
+const T2_MAX_SIZE = 64;
+const T2_MAX_CIPHER_BYTES = 4096;
+const T2_MAX_TRAILER_BITS = 4096;
+
+class BitWriter {
+  constructor() {
+    this.bits = "";
+  }
+  writeFixed(value, length) {
+    this.bits += (value >>> 0).toString(2).padStart(length, "0").slice(-length);
+  }
+  writeVarint(value) {
+    if (!Number.isInteger(value) || value < 0) throw new Error("varint must be a non-negative integer");
+    for (let k = 0; k <= 7; k += 1) {
+      const cap = 2 ** ((k + 1) * 4) - 1;
+      if (value <= cap) {
+        this.bits += "1".repeat(k) + "0";
+        this.writeFixed(value, (k + 1) * 4);
+        return;
+      }
+    }
+    throw new Error("varint value too large");
+  }
+}
+
+class BitReader {
+  constructor(bits) {
+    this.bits = bits;
+    this.pos = 0;
+  }
+  readFixed(length) {
+    if (length === 0) return 0;
+    if (this.pos + length > this.bits.length) throw new Error("Truncated id");
+    const value = parseInt(this.bits.slice(this.pos, this.pos + length), 2);
+    this.pos += length;
+    return value;
+  }
+  readVarint() {
+    let k = 0;
+    while (this.readFixed(1) === 1) {
+      k += 1;
+      if (k > 7) throw new Error("varint too large");
+    }
+    return this.readFixed((k + 1) * 4);
+  }
+}
+
+export function solutionKeyBytes(solution, size, byteCount) {
+  if (byteCount === 0) return [];
+  const rows = countsByRow(solution, size).join(",");
+  const cols = countsByCol(solution, size).join(",");
+  const bits = solution.map((cell) => cell ? "1" : "0").join("");
+  return Array.from({ length: byteCount }, (_, index) =>
+    hashString(`v2:${index}:${rows}:${cols}:${bits}`) & 0xff
+  );
+}
+
+export function checksumForBytes(secretBytes, solution, size) {
+  const bits = solution.map((cell) => cell ? "1" : "0").join("");
+  let hex = "";
+  for (const b of secretBytes) hex += (b & 0xff).toString(16).padStart(2, "0");
+  return hashString(`v2:check:${hex}:${size}:${bits}`) & 0xffff;
+}
+
+export function encodeIdV2(payload) {
+  const { size, shapeStyle, thermos, fillLengths, cipherBytes, checksum } = payload;
+  const shapeIdx = SHAPE_STYLES.indexOf(shapeStyle);
+  if (shapeIdx < 0) throw new Error("Bad shape style");
+  if (size < 4 || size > T2_MAX_SIZE) throw new Error("Bad size");
+  if (cipherBytes.length > T2_MAX_CIPHER_BYTES) throw new Error("Cipher too long");
+
+  const cellInfo = new Map();
+  thermos.forEach((thermo, tIdx) => {
+    thermo.forEach((cell, pos) => cellInfo.set(cell, { tIdx, pos }));
+  });
+
+  const w = new BitWriter();
+  w.writeFixed(T2_VERSION_MINOR, 4);
+  w.writeVarint(size);
+  w.writeVarint(shapeIdx);
+  w.writeVarint(0);
+
+  const bulbOrder = [];
+  for (let cell = 0; cell < size * size; cell += 1) {
+    const info = cellInfo.get(cell);
+    if (!info) throw new Error(`Cell ${cell} not in any thermo`);
+    if (info.pos === 0) {
+      w.writeFixed(0, 1);
+      bulbOrder.push(info.tIdx);
+    } else {
+      w.writeFixed(1, 1);
+      const predecessor = thermos[info.tIdx][info.pos - 1];
+      w.writeFixed(directionBetween(cell, predecessor, size), 2);
+    }
+  }
+  for (const tIdx of bulbOrder) w.writeVarint(fillLengths[tIdx]);
+
+  w.writeVarint(cipherBytes.length);
+  for (const b of cipherBytes) w.writeFixed(b & 0xff, 8);
+  w.writeFixed(checksum & 0xffff, 16);
+  w.writeVarint(0);
+
+  return `t2-${bitsToId(w.bits)}`;
+}
+
+export function decodeIdV2(id) {
+  if (!id.startsWith("t2-")) throw new Error("Not a t2 id");
+  const r = new BitReader(idToBits(id.slice(3)));
+
+  const minor = r.readFixed(4);
+  if (minor !== T2_VERSION_MINOR) {
+    throw new Error(`Puzzle uses a newer format (t2 minor=${minor}). Update the app.`);
+  }
+  const size = r.readVarint();
+  if (size < 4 || size > T2_MAX_SIZE) throw new Error("Bad size");
+  const shapeStyle = SHAPE_STYLES[r.readVarint()];
+  if (!shapeStyle) throw new Error("Bad shape style");
+  const variant = r.readVarint();
+  if (variant !== 0) throw new Error(`Unsupported puzzle variant: ${variant}`);
+
+  const flags = [];
+  for (let cell = 0; cell < size * size; cell += 1) {
+    const f = r.readFixed(1);
+    flags.push(f === 0 ? { bulb: true } : { bulb: false, dir: r.readFixed(2) });
+  }
+
+  const nextMap = new Map();
+  for (let cell = 0; cell < size * size; cell += 1) {
+    if (flags[cell].bulb) continue;
+    const pred = applyDir(cell, flags[cell].dir, size);
+    if (pred < 0) throw new Error("Bad direction");
+    if (nextMap.has(pred)) throw new Error("Branching path");
+    nextMap.set(pred, cell);
+  }
+
+  const thermos = [];
+  for (let cell = 0; cell < size * size; cell += 1) {
+    if (!flags[cell].bulb) continue;
+    const path = [cell];
+    let next = nextMap.get(cell);
+    while (next !== undefined) {
+      path.push(next);
+      next = nextMap.get(next);
+    }
+    if (path.length < 2) throw new Error("Length-1 thermo");
+    thermos.push(path);
+  }
+
+  const fillLengths = thermos.map((thermo) => {
+    const value = r.readVarint();
+    if (value > thermo.length) throw new Error("Bad fillLength");
+    return value;
+  });
+
+  const cipherByteLen = r.readVarint();
+  if (cipherByteLen > T2_MAX_CIPHER_BYTES) throw new Error("Cipher too long");
+  const cipherBytes = new Array(cipherByteLen);
+  for (let i = 0; i < cipherByteLen; i += 1) cipherBytes[i] = r.readFixed(8);
+
+  const checksum = r.readFixed(16);
+
+  const trailerBitCount = r.readVarint();
+  if (trailerBitCount > T2_MAX_TRAILER_BITS) throw new Error("Trailer too long");
+  for (let i = 0; i < trailerBitCount; i += 1) r.readFixed(1);
+
+  const solution = solutionFromLengths(size, thermos, fillLengths);
+  return {
+    size,
+    shapeStyle,
+    thermos,
+    fillLengths,
+    solution,
+    rowClues: countsByRow(solution, size),
+    colClues: countsByCol(solution, size),
+    cipherBytes,
+    checksum,
+    format: "t2",
+  };
+}

@@ -4,11 +4,15 @@ import {
   decodeCode,
   solutionKey,
   checksumFor,
+  decodeIdV2,
+  encodeIdV2,
+  solutionKeyBytes,
+  checksumForBytes,
 } from "./generator.js";
 
 /** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
 
-/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, creatingTimer: any, settings: { autoXAxis: boolean, cascadeThermoX: boolean } }} */
+/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean, settings: { autoXAxis: boolean, cascadeThermoX: boolean } }} */
 const state = {
   puzzle: null,
   marks: new Set(),
@@ -17,7 +21,8 @@ const state = {
   dragging: null,
   touchPending: null,
   lastCreatedId: null,
-  creatingTimer: null,
+  lastCreatedTitle: "",
+  generatingFresh: false,
   settings: {
     autoXAxis: false,
     cascadeThermoX: false,
@@ -39,12 +44,10 @@ const els = {
   gamePanel: document.querySelector("#gamePanel"),
   rulesPanel: document.querySelector("#rulesPanel"),
   createMode: document.querySelector("#createMode"),
-  backToPuzzle: document.querySelector("#backToPuzzle"),
   creator: document.querySelector("#creator"),
   creatorMessage: document.querySelector("#creatorMessage"),
-  difficulty: document.querySelector("#difficulty"),
-  shapeStyle: document.querySelector("#shapeStyle"),
-  giftCode: document.querySelector("#giftCode"),
+  giftCode: /** @type {HTMLInputElement} */ (document.querySelector("#giftCode")),
+  giftTitle: /** @type {HTMLInputElement} */ (document.querySelector("#giftTitle")),
   linkPanel: document.querySelector("#linkPanel"),
   shareLink: document.querySelector("#shareLink"),
   copyLink: document.querySelector("#copyLink"),
@@ -53,13 +56,19 @@ const els = {
   progressText: document.querySelector("#progressText"),
   colClues: document.querySelector("#colClues"),
   rowClues: document.querySelector("#rowClues"),
-  rowCluesRight: document.querySelector("#rowCluesRight"),
+  rowCluesRight: /** @type {HTMLElement} */ (document.querySelector("#rowCluesRight")),
   board: document.querySelector("#board"),
   hintText: document.querySelector("#hintText"),
   undoMove: /** @type {HTMLButtonElement} */ (document.querySelector("#undoMove")),
-  resetPuzzle: document.querySelector("#resetPuzzle"),
+  resetPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#resetPuzzle")),
+  newDifficulty: document.querySelector("#newDifficulty"),
+  newShapeStyle: document.querySelector("#newShapeStyle"),
+  newPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#newPuzzle")),
   winDialog: document.querySelector("#winDialog"),
-  giftLink: document.querySelector("#giftLink"),
+  winTitle: document.querySelector("#winTitle"),
+  winMessage: document.querySelector("#winMessage"),
+  giftLink: /** @type {HTMLAnchorElement} */ (document.querySelector("#giftLink")),
+  giftSecret: /** @type {HTMLElement} */ (document.querySelector("#giftSecret")),
   themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
   settingsToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#settingsToggle")),
   settingsDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#settingsDialog")),
@@ -119,69 +128,78 @@ els.settingCascadeThermoX.addEventListener("change", () => {
   localStorage.setItem(SETTINGS_KEYS.cascadeThermoX, String(state.settings.cascadeThermoX));
 });
 
-const savedDifficulty = localStorage.getItem("thermogift:difficulty");
-if (savedDifficulty && [...els.difficulty.options].some((opt) => opt.value === savedDifficulty)) {
-  els.difficulty.value = savedDifficulty;
+const savedNewDifficulty = localStorage.getItem("thermogift:newDifficulty");
+if (savedNewDifficulty && [...els.newDifficulty.options].some((opt) => opt.value === savedNewDifficulty)) {
+  els.newDifficulty.value = savedNewDifficulty;
 }
-const savedShape = localStorage.getItem("thermogift:shapeStyle");
-if (savedShape && [...els.shapeStyle.options].some((opt) => opt.value === savedShape)) {
-  els.shapeStyle.value = savedShape;
+const savedNewShape = localStorage.getItem("thermogift:newShapeStyle");
+if (savedNewShape && [...els.newShapeStyle.options].some((opt) => opt.value === savedNewShape)) {
+  els.newShapeStyle.value = savedNewShape;
 }
-els.difficulty.addEventListener("change", () => localStorage.setItem("thermogift:difficulty", els.difficulty.value));
-els.shapeStyle.addEventListener("change", () => localStorage.setItem("thermogift:shapeStyle", els.shapeStyle.value));
+els.newDifficulty.addEventListener("change", () => localStorage.setItem("thermogift:newDifficulty", els.newDifficulty.value));
+els.newShapeStyle.addEventListener("change", () => localStorage.setItem("thermogift:newShapeStyle", els.newShapeStyle.value));
 
-els.creator.addEventListener("submit", async (event) => {
+els.newPuzzle.addEventListener("click", () => {
+  generateFreshPuzzle(els.newDifficulty.value, els.newShapeStyle.value);
+});
+
+els.creator.addEventListener("submit", (event) => {
   event.preventDefault();
-  const code = els.giftCode.value.trim();
-  const presetId = els.difficulty.value;
-  const shapeStyle = els.shapeStyle.value;
-  const submitButton = els.creator.querySelector("button[type='submit']");
-
-  if (!/^[A-Za-z0-9]{5}$/.test(code)) {
+  const code = els.giftCode.value;
+  if (code.length === 0) {
     els.giftCode.focus();
     return;
   }
-
-  submitButton.disabled = true;
-  setCreatingState(submitButton, true);
-  els.linkPanel.hidden = true;
-  setCreatorMessage("Creating puzzle in the background...", false);
-
+  if (!state.puzzle?.solution) {
+    setCreatorMessage("Open a puzzle first, then embed your code.", true);
+    return;
+  }
   try {
-    const id = await generatePuzzleId(presetId, shapeStyle, code);
+    const id = embedSecretIntoCurrent(state.puzzle, code);
+    const title = els.giftTitle.value.trim();
     const url = new URL(window.location.href);
-    url.search = `?id=${id}`;
-    history.replaceState(null, "", url);
-
+    const params = new URLSearchParams();
+    params.set("id", id);
+    if (title) params.set("title", title);
+    url.search = `?${params.toString()}`;
     state.lastCreatedId = id;
+    state.lastCreatedTitle = title;
     localStorage.setItem("thermogift:lastPuzzle", id);
+    if (title) localStorage.setItem("thermogift:lastPuzzleTitle", title);
+    else localStorage.removeItem("thermogift:lastPuzzleTitle");
     els.shareLink.value = url.href;
     els.openPuzzle.hidden = false;
-    setCreatorMessage("Puzzle link ready.", false);
-    loadFromId(id);
-    els.creatorPanel.hidden = false;
     els.linkPanel.hidden = false;
-    els.createMode.textContent = "Hide creator";
+    setCreatorMessage("Puzzle link ready. Share it.", false);
   } catch (error) {
-    setCreatorMessage(error.message || "Could not create that puzzle. Try again or choose a smaller preset.", true);
-  } finally {
-    submitButton.disabled = false;
-    setCreatingState(submitButton, false);
+    setCreatorMessage(error.message || "Could not embed that code.", true);
   }
 });
 
-els.createMode.addEventListener("click", () => {
-  toggleCreatorPanel();
-});
+function embedSecretIntoCurrent(puzzle, code) {
+  const secretBytes = new TextEncoder().encode(code);
+  if (secretBytes.length > 4096) throw new Error("Code too long (max 4096 UTF-8 bytes).");
+  const key = solutionKeyBytes(puzzle.solution, puzzle.size, secretBytes.length);
+  const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
+  const checksum = checksumForBytes(secretBytes, puzzle.solution, puzzle.size);
+  return encodeIdV2({
+    size: puzzle.size,
+    shapeStyle: puzzle.shapeStyle,
+    thermos: puzzle.thermos,
+    fillLengths: puzzle.fillLengths,
+    cipherBytes,
+    checksum,
+  });
+}
 
-els.backToPuzzle.addEventListener("click", () => {
-  const id = state.puzzle?.id ?? state.lastCreatedId ?? localStorage.getItem("thermogift:lastPuzzle");
-  if (id) openPuzzle(id);
+els.createMode.addEventListener("click", () => {
+  setCreatorOpen(els.creatorPanel.hidden);
 });
 
 els.openPuzzle.addEventListener("click", () => {
   const id = state.lastCreatedId ?? localStorage.getItem("thermogift:lastPuzzle");
-  if (id) openPuzzle(id);
+  const title = state.lastCreatedTitle || localStorage.getItem("thermogift:lastPuzzleTitle") || "";
+  if (id) openPuzzle(id, title);
 });
 
 els.copyLink.addEventListener("click", async () => {
@@ -193,8 +211,12 @@ els.copyLink.addEventListener("click", async () => {
 });
 
 els.resetPuzzle.addEventListener("click", () => {
-  const confirmRow = document.createElement("div");
-  confirmRow.className = "reset-confirm";
+  if (els.resetPuzzle.dataset.confirming === "true") return;
+  els.resetPuzzle.dataset.confirming = "true";
+  els.resetPuzzle.classList.add("is-confirming");
+
+  const popover = document.createElement("div");
+  popover.className = "reset-confirm";
   const label = document.createElement("span");
   label.textContent = "Are you sure?";
   const yes = document.createElement("button");
@@ -204,19 +226,45 @@ els.resetPuzzle.addEventListener("click", () => {
   no.type = "button";
   no.textContent = "No";
 
-  const restore = () => confirmRow.replaceWith(els.resetPuzzle);
+  const dismiss = () => {
+    popover.remove();
+    delete els.resetPuzzle.dataset.confirming;
+    els.resetPuzzle.classList.remove("is-confirming");
+    document.removeEventListener("pointerdown", onOutside, true);
+    document.removeEventListener("keydown", onKey);
+  };
+  /** @param {PointerEvent} e */
+  const onOutside = (e) => {
+    const target = /** @type {Node} */ (e.target);
+    if (!popover.contains(target) && target !== els.resetPuzzle) dismiss();
+  };
+  /** @param {KeyboardEvent} e */
+  const onKey = (e) => {
+    if (e.key === "Escape") dismiss();
+  };
+
   yes.addEventListener("click", () => {
     if (state.marks.size > 0 || state.xMarks.size > 0) pushHistory();
     state.marks.clear();
     state.xMarks.clear();
     saveProgress();
     renderPuzzle();
-    restore();
+    dismiss();
   });
-  no.addEventListener("click", restore);
+  no.addEventListener("click", dismiss);
 
-  confirmRow.append(label, yes, no);
-  els.resetPuzzle.replaceWith(confirmRow);
+  popover.append(label, yes, no);
+  els.resetPuzzle.insertAdjacentElement("afterend", popover);
+  const btnTop = els.resetPuzzle.offsetTop;
+  const btnLeft = els.resetPuzzle.offsetLeft;
+  const btnWidth = els.resetPuzzle.offsetWidth;
+  popover.style.left = `${btnLeft + btnWidth}px`;
+  popover.style.top = `${btnTop}px`;
+  popover.style.transform = "translate(-100%, calc(-100% - 6px))";
+  setTimeout(() => {
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onKey);
+  }, 0);
 });
 
 els.undoMove.addEventListener("click", undo);
@@ -261,78 +309,83 @@ function cancelTouchPending() {
 }
 
 function loadFromLocation() {
-  const id = new URLSearchParams(window.location.search).get("id");
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("id");
   if (id) {
-    loadFromId(id);
-  } else {
-    showCreateMode();
+    setCreatorOpen(false);
+    loadFromId(id, { isSecret: true, title: params.get("title") || "" });
+    return;
   }
+  if (params.get("create") === "1") setCreatorOpen(true);
+  generateFreshPuzzle(els.newDifficulty.value, els.newShapeStyle.value);
 }
 
-function loadFromId(id) {
+/** @param {string} id @param {{ isSecret?: boolean, title?: string }} [opts] */
+function loadFromId(id, opts = { isSecret: true }) {
   try {
-    const payload = decodeId(id);
+    const payload = /** @type {any} */ (id.startsWith("t2-") ? decodeIdV2(id) : decodeId(id));
+    const title = opts.title ?? "";
     state.puzzle = {
       shapeStyle: payload.shapeStyle,
       size: payload.size,
       thermos: payload.thermos,
+      fillLengths: payload.fillLengths,
+      solution: payload.solution,
       rowClues: payload.rowClues,
       colClues: payload.colClues,
       cipher: payload.cipher,
+      cipherBytes: payload.cipherBytes,
       checksum: payload.checksum,
+      format: payload.format ?? "t1",
       id,
+      title,
+      isSecret: opts.isSecret !== false,
     };
-    localStorage.setItem("thermogift:lastPuzzle", id);
+    if (state.puzzle.isSecret) localStorage.setItem("thermogift:lastPuzzle", id);
     loadProgress();
-    els.puzzleName.textContent = puzzleLabel(payload);
-    els.hintText.textContent = "Click cells to fill them. A solved grid unlocks the giveaway code.";
-    showSolverMode();
+    clearCreatorLink();
+    els.puzzleName.textContent = title || puzzleLabel(payload);
+    els.hintText.hidden = true;
+    els.hintText.textContent = "";
+    revealGamePanel();
     renderPuzzle();
   } catch (error) {
-    localStorage.removeItem("thermogift:lastPuzzle");
-    showCreateMode();
-    els.hintText.textContent = "That puzzle link could not be read. Create a fresh one above.";
+    if (opts.isSecret) localStorage.removeItem("thermogift:lastPuzzle");
+    revealGamePanel();
+    els.hintText.hidden = false;
+    els.hintText.textContent = "That puzzle link could not be read. Generate a new one below.";
   }
 }
 
-function showCreateMode() {
-  els.creatorPanel.hidden = false;
-  els.gamePanel.hidden = true;
-  els.rulesPanel.hidden = true;
-  els.linkPanel.hidden = !els.shareLink.value;
-  els.createMode.hidden = true;
-  els.backToPuzzle.hidden = !activePuzzleId();
-  const url = new URL(window.location.href);
-  url.search = "?create=1";
-  history.replaceState(null, "", url);
-}
-
-function showSolverMode() {
-  els.creatorPanel.hidden = true;
-  els.linkPanel.hidden = true;
+function revealGamePanel() {
   els.gamePanel.hidden = false;
   els.rulesPanel.hidden = false;
-  els.createMode.hidden = false;
-  els.createMode.textContent = "Create your own";
-  els.backToPuzzle.hidden = true;
 }
 
-function toggleCreatorPanel() {
-  const opening = els.creatorPanel.hidden;
-  els.creatorPanel.hidden = !opening;
-  els.linkPanel.hidden = !opening || !els.shareLink.value;
-  els.createMode.textContent = opening ? "Hide creator" : "Create your own";
+function setCreatorOpen(open) {
+  els.creatorPanel.hidden = !open;
+  els.linkPanel.hidden = !open || !els.shareLink.value;
+  els.createMode.textContent = open ? "Close" : "Embed a secret code";
 }
 
-function openPuzzle(id) {
+function clearCreatorLink() {
+  state.lastCreatedId = null;
+  els.shareLink.value = "";
+  els.linkPanel.hidden = true;
+  els.openPuzzle.hidden = true;
+  setCreatorMessage("", false);
+}
+
+/** @param {string} id @param {string} [title] */
+function openPuzzle(id, title = "") {
   const url = new URL(window.location.href);
-  url.search = `?id=${id}`;
+  const params = new URLSearchParams();
+  params.set("id", id);
+  if (title) params.set("title", title);
+  url.search = `?${params.toString()}`;
   history.replaceState(null, "", url);
-  loadFromId(id);
-}
-
-function activePuzzleId() {
-  return state.puzzle?.id ?? state.lastCreatedId ?? localStorage.getItem("thermogift:lastPuzzle");
+  setCreatorOpen(false);
+  loadFromId(id, { isSecret: true, title });
 }
 
 function puzzleLabel(payload) {
@@ -386,20 +439,33 @@ function generatePuzzleId(presetId, shapeStyle, code) {
   });
 }
 
-function setCreatingState(button, creating) {
-  if (!creating) {
-    clearInterval(state.creatingTimer);
-    state.creatingTimer = null;
-    button.textContent = "Create link";
-    return;
+async function generateFreshPuzzle(presetId, shapeStyle) {
+  if (state.generatingFresh) return;
+  state.generatingFresh = true;
+  const wasLabel = els.newPuzzle.textContent;
+  els.newPuzzle.disabled = true;
+  els.newPuzzle.textContent = "Generating…";
+  els.hintText.hidden = true;
+  els.hintText.textContent = "";
+  try {
+    const id = await generatePuzzleId(presetId, shapeStyle, randomFreshCode());
+    loadFromId(id, { isSecret: false });
+  } catch (error) {
+    revealGamePanel();
+    els.hintText.hidden = false;
+    els.hintText.textContent = error?.message || "Could not generate that puzzle. Try a smaller size.";
+  } finally {
+    state.generatingFresh = false;
+    els.newPuzzle.disabled = false;
+    els.newPuzzle.textContent = wasLabel;
   }
+}
 
-  let dots = 0;
-  button.textContent = "Creating";
-  state.creatingTimer = setInterval(() => {
-    dots = (dots + 1) % 4;
-    button.textContent = `Creating${".".repeat(dots)}`;
-  }, 350);
+function randomFreshCode() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  let out = "";
+  for (let i = 0; i < 5; i += 1) out += chars[Math.floor(Math.random() * chars.length)];
+  return out;
 }
 
 function setCreatorMessage(message, isError) {
@@ -581,10 +647,20 @@ function renderThermoGlyph(button, index, meta) {
   button.append(svg);
 
   if (state.xMarks.has(index)) {
-    const x = document.createElement("span");
-    x.className = "x-mark";
-    x.textContent = "X";
+    const x = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    x.setAttribute("class", "x-mark");
+    x.setAttribute("viewBox", "0 0 24 24");
+    x.setAttribute("aria-hidden", "true");
+    x.append(svgPath("M6 6 L18 18", "x-mark-outline"));
+    x.append(svgPath("M18 6 L6 18", "x-mark-outline"));
+    x.append(svgPath("M6 6 L18 18", "x-mark-line"));
+    x.append(svgPath("M18 6 L6 18", "x-mark-line"));
     button.append(x);
+
+    const xText = document.createElement("span");
+    xText.className = "x-mark-text";
+    xText.textContent = "X";
+    button.append(xText);
   }
 }
 
@@ -647,16 +723,74 @@ function polarPoint(center, radius, degrees) {
 function maybeReveal() {
   const puzzle = state.puzzle;
   if (!puzzle || !isSolved()) return;
+  if (!puzzle.isSecret) {
+    showWin("Solved!", "Nice work — generate another with “New puzzle” below.", null);
+    return;
+  }
   const current = Array.from({ length: puzzle.size * puzzle.size }, (_, index) => state.marks.has(index));
-  const code = decodeCode(puzzle.cipher, solutionKey(current, puzzle.size));
-  if (!/^[A-Za-z0-9]{5}$/.test(code) || checksumFor(code, current, puzzle.size) !== puzzle.checksum) {
+  const secret = decodeSecret(puzzle, current);
+  if (secret === null) {
     els.progressText.textContent = "Check mistakes";
     return;
   }
-  const href = `https://www.steamgifts.com/giveaway/${code}/`;
-  els.giftLink.href = href;
-  els.giftLink.textContent = href;
+  if (secret === "") {
+    showWin("Solved!", "No secret was embedded in this puzzle.", null);
+    return;
+  }
+  showWin("Secret unlocked!", "Your solved grid decodes to:", secret);
+}
+
+/** @param {any} puzzle @param {boolean[]} current @returns {string | null} */
+function decodeSecret(puzzle, current) {
+  if (puzzle.format === "t2") {
+    const cipherBytes = puzzle.cipherBytes;
+    const key = solutionKeyBytes(current, puzzle.size, cipherBytes.length);
+    const plain = new Uint8Array(cipherBytes.length);
+    for (let i = 0; i < cipherBytes.length; i += 1) plain[i] = cipherBytes[i] ^ key[i];
+    if (checksumForBytes(plain, current, puzzle.size) !== puzzle.checksum) return null;
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(plain);
+    } catch {
+      return null;
+    }
+  }
+  const code = decodeCode(puzzle.cipher, solutionKey(current, puzzle.size));
+  if (code.length !== puzzle.cipher.length) return null;
+  if (!/^[A-Za-z0-9]+$/.test(code)) return null;
+  if (checksumFor(code, current, puzzle.size) !== puzzle.checksum) return null;
+  return code;
+}
+
+/** @param {string} title @param {string} message @param {string | null} secret */
+function showWin(title, message, secret) {
+  els.winTitle.textContent = title;
+  els.winMessage.textContent = message;
+  if (!secret) {
+    els.giftSecret.textContent = "";
+    els.giftLink.hidden = true;
+    els.giftLink.removeAttribute("href");
+    els.giftLink.textContent = "";
+  } else {
+    els.giftSecret.textContent = secret;
+    const href = sniffSecretHref(secret);
+    if (href) {
+      els.giftLink.href = href;
+      els.giftLink.textContent = href;
+      els.giftLink.hidden = false;
+    } else {
+      els.giftLink.hidden = true;
+      els.giftLink.removeAttribute("href");
+      els.giftLink.textContent = "";
+    }
+  }
   els.winDialog.showModal();
+}
+
+/** @param {string} secret @returns {string | null} */
+function sniffSecretHref(secret) {
+  if (/^https?:\/\/\S+$/.test(secret)) return secret;
+  if (/^[A-Za-z0-9]{5}$/.test(secret)) return `https://www.steamgifts.com/giveaway/${secret}/`;
+  return null;
 }
 
 function isSolved() {

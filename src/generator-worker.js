@@ -8,26 +8,28 @@ import {
   countsByRow,
   countsByCol,
   isUsableClueSet,
-  encodeCode,
-  encodeId,
-  solutionKey,
-  checksumFor,
+  encodeIdV2,
+  solutionKeyBytes,
+  checksumForBytes,
 } from "./generator.js";
 
 self.addEventListener("message", (event) => {
   try {
     const { presetId, shapeStyle, code } = event.data;
-    if (!/^[A-Za-z0-9]{1,31}$/.test(code)) throw new Error("Bad code");
+    if (typeof code !== "string") throw new Error("Bad code");
+    const secretBytes = new TextEncoder().encode(code);
+    if (secretBytes.length > 4096) throw new Error("Code too long (max 4096 UTF-8 bytes)");
     const puzzle = createPuzzle(presetId, shapeStyle);
-    const cipher = encodeCode(code, solutionKey(puzzle.solution, puzzle.size));
-    const checksum = checksumFor(code, puzzle.solution, puzzle.size);
-    const id = encodeId({
-      z: puzzle.size,
-      y: puzzle.shapeStyle,
+    const key = solutionKeyBytes(puzzle.solution, puzzle.size, secretBytes.length);
+    const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
+    const checksum = checksumForBytes(secretBytes, puzzle.solution, puzzle.size);
+    const id = encodeIdV2({
+      size: puzzle.size,
+      shapeStyle: puzzle.shapeStyle,
       thermos: puzzle.thermos,
       fillLengths: puzzle.fillLengths,
-      c: cipher,
-      k: checksum,
+      cipherBytes,
+      checksum,
     });
     self.postMessage({ ok: true, id });
   } catch (error) {

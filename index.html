@@ -19,37 +19,22 @@
       <nav class="app-nav" aria-label="App navigation">
         <a href="./" class="brand-title">ThermoGift</a>
         <div>
-          <button id="backToPuzzle" class="ghost-button" type="button" hidden>Back to puzzle</button>
-          <button id="createMode" class="ghost-button" type="button">Create your own</button>
+          <button id="createMode" class="ghost-button create-mode-btn" type="button">Embed a secret code</button>
         </div>
       </nav>
 
-      <section class="topbar" id="creatorPanel" aria-label="Puzzle creator">
-        <p class="creator-intro">Create a thermometer puzzle that unlocks a 5-character SteamGifts code when solved.</p>
+      <section class="topbar" id="creatorPanel" aria-label="Puzzle creator" hidden>
+        <p class="creator-intro">Embed a secret code in the current puzzle. Whoever solves it unlocks your code.</p>
         <p class="creator-message" id="creatorMessage" role="status" aria-live="polite"></p>
 
-        <form id="creator" class="creator">
+        <form id="creator" class="creator creator-embed">
           <label>
-            Difficulty
-            <select id="difficulty">
-              <option value="tiny">Tiny 4x4</option>
-              <option value="easy">Easy 6x6</option>
-              <option value="normal" selected>Normal 8x8</option>
-              <option value="hard">Hard 10x10</option>
-              <option value="expert">Expert 12x12</option>
-              <option value="brutal">Brutal 15x15</option>
-            </select>
+            Title (optional)
+            <input id="giftTitle" maxlength="120" placeholder="Shown above the puzzle" />
           </label>
           <label>
-            Thermometers
-            <select id="shapeStyle">
-              <option value="curved" selected>Curved</option>
-              <option value="straight">Straight only</option>
-            </select>
-          </label>
-          <label>
-            SG code
-            <input id="giftCode" maxlength="5" pattern="[A-Za-z0-9]{5}" placeholder="Abcd3" required />
+            Secret code
+            <input id="giftCode" maxlength="1024" placeholder="A code, URL, or message…" required />
           </label>
           <button type="submit">Create link</button>
         </form>
@@ -68,7 +53,7 @@
         <aside class="status">
           <div>
             <span class="label">Puzzle</span>
-            <strong id="puzzleName">Create or open a link</strong>
+            <strong id="puzzleName">Loading…</strong>
           </div>
           <div>
             <span class="label">Progress</span>
@@ -76,7 +61,6 @@
           </div>
           <div class="puzzle-actions">
             <button id="undoMove" type="button" disabled>Undo</button>
-            <button id="resetPuzzle" type="button">Reset grid</button>
           </div>
         </aside>
 
@@ -85,15 +69,39 @@
           <div class="row-area">
             <div class="row-clues" id="rowClues" aria-hidden="true"></div>
             <div class="board" id="board" aria-label="Puzzle grid"></div>
-            <div class="row-clues" id="rowCluesRight" aria-hidden="true" style="visibility: hidden;"></div>
+            <div class="row-clues row-clues-phantom" id="rowCluesRight" aria-hidden="true"></div>
           </div>
-          <p class="hint" id="hintText">Creator links will appear above. Open one to play the puzzle.</p>
         </div>
+
+        <div class="board-controls">
+          <label>
+            Difficulty
+            <select id="newDifficulty">
+              <option value="tiny" selected>Tiny 4x4</option>
+              <option value="easy">Easy 6x6</option>
+              <option value="normal">Normal 8x8</option>
+              <option value="hard">Hard 10x10</option>
+              <option value="expert">Expert 12x12</option>
+              <option value="brutal">Brutal 15x15</option>
+            </select>
+          </label>
+          <label>
+            Thermometers
+            <select id="newShapeStyle">
+              <option value="curved">Curved</option>
+              <option value="straight" selected>Straight only</option>
+            </select>
+          </label>
+          <button id="newPuzzle" type="button">New puzzle</button>
+          <button id="resetPuzzle" type="button" class="ghost-button">Reset grid</button>
+        </div>
+
+        <p class="hint" id="hintText" hidden></p>
       </section>
 
       <section class="rules-panel" id="rulesPanel" hidden>
         <span class="label">Rules</span>
-        <p>Fill thermometers from the round bulb toward the rounded tip. A later segment cannot be filled unless every segment before it is filled. The numbers above and beside the grid tell how many red cells belong in that column or row. Right-click a cell to mark an X. When every count matches and the thermometers obey the rule, the solved grid unlocks the giveaway code.</p>
+        <p>Fill thermometers from the round bulb toward the rounded tip. A later segment cannot be filled unless every segment before it is filled. The numbers above and beside the grid tell how many red cells belong in that column or row. Right-click a cell to mark an X. The puzzle is solved when every count matches and each thermometer is filled bulb-first.</p>
       </section>
 
       <footer class="page-footer">
@@ -139,9 +147,10 @@
       </dialog>
 
       <dialog id="winDialog">
-        <h2>Giveaway unlocked</h2>
-        <p>Your solved grid decodes to:</p>
-        <a id="giftLink" target="_blank" rel="noreferrer"></a>
+        <h2 id="winTitle">Secret unlocked!</h2>
+        <p id="winMessage">Your solved grid decodes to:</p>
+        <p id="giftSecret" class="gift-secret"></p>
+        <a id="giftLink" target="_blank" rel="noreferrer" hidden></a>
         <form method="dialog">
           <button>Close</button>
         </form>
