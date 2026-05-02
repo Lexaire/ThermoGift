@@ -146,10 +146,6 @@ els.newPuzzle.addEventListener("click", () => {
 els.creator.addEventListener("submit", (event) => {
   event.preventDefault();
   const code = els.giftCode.value;
-  if (code.length === 0) {
-    els.giftCode.focus();
-    return;
-  }
   if (!state.puzzle?.solution) {
     setCreatorMessage("Open a puzzle first, then embed your code.", true);
     return;
@@ -365,7 +361,7 @@ function revealGamePanel() {
 function setCreatorOpen(open) {
   els.creatorPanel.hidden = !open;
   els.linkPanel.hidden = !open || !els.shareLink.value;
-  els.createMode.textContent = open ? "Close" : "Embed a secret code";
+  els.createMode.textContent = open ? "Close" : "Share this puzzle";
 }
 
 function clearCreatorLink() {

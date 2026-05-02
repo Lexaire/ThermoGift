@@ -19,12 +19,12 @@
       <nav class="app-nav" aria-label="App navigation">
         <a href="./" class="brand-title">ThermoGift</a>
         <div>
-          <button id="createMode" class="ghost-button create-mode-btn" type="button">Embed a secret code</button>
+          <button id="createMode" class="ghost-button create-mode-btn" type="button">Share this puzzle</button>
         </div>
       </nav>
 
       <section class="topbar" id="creatorPanel" aria-label="Puzzle creator" hidden>
-        <p class="creator-intro">Embed a secret code in the current puzzle. Whoever solves it unlocks your code.</p>
+        <p class="creator-intro">Share the current puzzle. Optionally embed a secret code that's revealed when it's solved.</p>
         <p class="creator-message" id="creatorMessage" role="status" aria-live="polite"></p>
 
         <form id="creator" class="creator creator-embed">
@@ -33,8 +33,8 @@
             <input id="giftTitle" maxlength="120" placeholder="Shown above the puzzle" />
           </label>
           <label>
-            Secret code
-            <input id="giftCode" maxlength="1024" placeholder="A code, URL, or message…" required />
+            Secret code (optional)
+            <input id="giftCode" maxlength="1024" placeholder="A code, URL, or message…" />
           </label>
           <button type="submit">Create link</button>
         </form>
