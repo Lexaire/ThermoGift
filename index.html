@@ -74,7 +74,10 @@
             <span class="label">Progress</span>
             <strong id="progressText">0%</strong>
           </div>
-          <button id="resetPuzzle" type="button">Reset grid</button>
+          <div class="puzzle-actions">
+            <button id="undoMove" type="button" disabled>Undo</button>
+            <button id="resetPuzzle" type="button">Reset grid</button>
+          </div>
         </aside>
 
         <div class="board-wrap">
@@ -94,6 +97,13 @@
       </section>
 
       <footer class="page-footer">
+        <button id="settingsToggle" class="ghost-button settings-toggle" type="button" aria-label="Open assist settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 0 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 0 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 0 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 0 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z" />
+          </svg>
+          <span>Assists</span>
+        </button>
         <button id="themeToggle" class="ghost-button theme-toggle" type="button" aria-label="Theme: auto">
           <svg data-icon="auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="9" />
@@ -109,6 +119,24 @@
           </svg>
         </button>
       </footer>
+
+      <dialog id="settingsDialog" class="settings-dialog" aria-label="Assist settings">
+        <h2>Assists</h2>
+        <p class="settings-intro">Optional shortcuts. Both off by default.</p>
+        <form method="dialog" class="settings-form">
+          <label class="setting-row">
+            <input type="checkbox" id="settingAutoXAxis" />
+            <span class="setting-label">Auto-X completed rows and columns</span>
+            <span class="setting-desc">When a clue is met, click it to mark the rest of that row or column with X.</span>
+          </label>
+          <label class="setting-row">
+            <input type="checkbox" id="settingCascadeThermoX" />
+            <span class="setting-label">Cascade X up the thermometer</span>
+            <span class="setting-desc">Marking an X on a thermometer also X's everything above it toward the tip.</span>
+          </label>
+          <button class="settings-done">Done</button>
+        </form>
+      </dialog>
 
       <dialog id="winDialog">
         <h2>Giveaway unlocked</h2>

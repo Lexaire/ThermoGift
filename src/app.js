@@ -6,16 +6,30 @@ import {
   checksumFor,
 } from "./generator.js";
 
-/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, creatingTimer: any }} */
+/** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
+
+/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, creatingTimer: any, settings: { autoXAxis: boolean, cascadeThermoX: boolean } }} */
 const state = {
   puzzle: null,
   marks: new Set(),
   xMarks: new Set(),
+  history: [],
   dragging: null,
   touchPending: null,
   lastCreatedId: null,
   creatingTimer: null,
+  settings: {
+    autoXAxis: false,
+    cascadeThermoX: false,
+  },
 };
+
+const HISTORY_LIMIT = 50;
+
+const SETTINGS_KEYS = /** @type {const} */ ({
+  autoXAxis: "thermogift:assist:autoXAxis",
+  cascadeThermoX: "thermogift:assist:cascadeThermoX",
+});
 
 const LONG_PRESS_MS = 350;
 const TOUCH_MOVE_THRESHOLD_PX = 10;
@@ -42,10 +56,15 @@ const els = {
   rowCluesRight: document.querySelector("#rowCluesRight"),
   board: document.querySelector("#board"),
   hintText: document.querySelector("#hintText"),
+  undoMove: /** @type {HTMLButtonElement} */ (document.querySelector("#undoMove")),
   resetPuzzle: document.querySelector("#resetPuzzle"),
   winDialog: document.querySelector("#winDialog"),
   giftLink: document.querySelector("#giftLink"),
   themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
+  settingsToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#settingsToggle")),
+  settingsDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#settingsDialog")),
+  settingAutoXAxis: /** @type {HTMLInputElement} */ (document.querySelector("#settingAutoXAxis")),
+  settingCascadeThermoX: /** @type {HTMLInputElement} */ (document.querySelector("#settingCascadeThermoX")),
 };
 
 /** @type {readonly ("auto" | "light" | "dark")[]} */
@@ -74,6 +93,30 @@ els.themeToggle.addEventListener("click", () => {
   const next = THEME_CYCLE[(THEME_CYCLE.indexOf(currentTheme()) + 1) % THEME_CYCLE.length];
   localStorage.setItem("thermogift:theme", next);
   applyTheme(next);
+});
+
+function loadSettings() {
+  state.settings.autoXAxis = localStorage.getItem(SETTINGS_KEYS.autoXAxis) === "true";
+  state.settings.cascadeThermoX = localStorage.getItem(SETTINGS_KEYS.cascadeThermoX) === "true";
+  els.settingAutoXAxis.checked = state.settings.autoXAxis;
+  els.settingCascadeThermoX.checked = state.settings.cascadeThermoX;
+}
+
+loadSettings();
+
+els.settingsToggle.addEventListener("click", () => {
+  els.settingsDialog.showModal();
+});
+
+els.settingAutoXAxis.addEventListener("change", () => {
+  state.settings.autoXAxis = els.settingAutoXAxis.checked;
+  localStorage.setItem(SETTINGS_KEYS.autoXAxis, String(state.settings.autoXAxis));
+  if (state.puzzle) renderPuzzle();
+});
+
+els.settingCascadeThermoX.addEventListener("change", () => {
+  state.settings.cascadeThermoX = els.settingCascadeThermoX.checked;
+  localStorage.setItem(SETTINGS_KEYS.cascadeThermoX, String(state.settings.cascadeThermoX));
 });
 
 const savedDifficulty = localStorage.getItem("thermogift:difficulty");
@@ -163,6 +206,7 @@ els.resetPuzzle.addEventListener("click", () => {
 
   const restore = () => confirmRow.replaceWith(els.resetPuzzle);
   yes.addEventListener("click", () => {
+    if (state.marks.size > 0 || state.xMarks.size > 0) pushHistory();
     state.marks.clear();
     state.xMarks.clear();
     saveProgress();
@@ -174,6 +218,32 @@ els.resetPuzzle.addEventListener("click", () => {
   confirmRow.append(label, yes, no);
   els.resetPuzzle.replaceWith(confirmRow);
 });
+
+els.undoMove.addEventListener("click", undo);
+
+function pushHistory() {
+  state.history.push({ marks: [...state.marks], xMarks: [...state.xMarks] });
+  if (state.history.length > HISTORY_LIMIT) state.history.shift();
+}
+
+function undo() {
+  const previous = state.history.pop();
+  if (!previous) return;
+  state.marks = new Set(previous.marks);
+  state.xMarks = new Set(previous.xMarks);
+  saveProgress();
+  renderPuzzle();
+}
+
+function clearHistory() {
+  state.history.length = 0;
+}
+
+function updateUndoButton() {
+  const empty = state.history.length === 0;
+  els.undoMove.disabled = empty;
+  els.undoMove.title = empty ? "Nothing to undo" : "Undo last move";
+}
 
 window.addEventListener("pointerup", () => {
   state.dragging = null;
@@ -348,9 +418,9 @@ function renderPuzzle() {
   els.board.style.gridTemplateRows = `repeat(${puzzle.size}, var(--cell))`;
   els.board.parentElement.parentElement.style.setProperty("--grid-size", puzzle.size);
 
-  els.colClues.replaceChildren(...puzzle.colClues.map((clue, index) => clueEl(clue, columnCount(index))));
-  els.rowClues.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index))));
-  els.rowCluesRight.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index))));
+  els.colClues.replaceChildren(...puzzle.colClues.map((clue, index) => clueEl(clue, columnCount(index), "col", index)));
+  els.rowClues.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index), "row", index)));
+  els.rowCluesRight.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index), "row", index)));
 
   const thermoByCell = new Map();
   puzzle.thermos.forEach((thermo, thermoIndex) => thermo.forEach((cell, pathIndex) => thermoByCell.set(cell, { thermo, thermoIndex, pathIndex })));
@@ -364,7 +434,7 @@ function renderPuzzle() {
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       if (state.touchPending || event.pointerType === "touch") return;
-      toggleXMark(index);
+      setThermoXMark(meta, xMarkMode(meta));
     });
     button.addEventListener("pointerdown", (event) => {
       if (event.button !== 0) return;
@@ -376,11 +446,12 @@ function renderPuzzle() {
         const timer = window.setTimeout(() => {
           if (!state.touchPending) return;
           state.touchPending.fired = true;
-          toggleXMark(state.touchPending.index);
+          setThermoXMark(state.touchPending.meta, xMarkMode(state.touchPending.meta));
         }, LONG_PRESS_MS);
         state.touchPending = { index, meta, startX: event.clientX, startY: event.clientY, timer, fired: false };
         return;
       }
+      pushHistory();
       state.dragging = markMode(meta);
       setThermoMark(meta, state.dragging);
     });
@@ -409,6 +480,7 @@ function renderPuzzle() {
   els.board.replaceChildren(...cells);
 
   updateProgress();
+  updateUndoButton();
 }
 
 function markMode(meta) {
@@ -417,6 +489,7 @@ function markMode(meta) {
 
 function setThermoMark(meta, mode) {
   if (!meta) return;
+  if (state.dragging === null) pushHistory();
   if (mode === "fill") {
     meta.thermo.slice(0, meta.pathIndex + 1).forEach((cell) => {
       state.marks.add(cell);
@@ -430,12 +503,34 @@ function setThermoMark(meta, mode) {
   maybeReveal();
 }
 
-function toggleXMark(index) {
-  state.marks.delete(index);
-  if (state.xMarks.has(index)) state.xMarks.delete(index);
-  else state.xMarks.add(index);
+function xMarkMode(meta) {
+  return state.xMarks.has(meta.thermo[meta.pathIndex]) ? "clear-x" : "x";
+}
+
+function setThermoXMark(meta, mode) {
+  if (!meta) return;
+  pushHistory();
+  const cell = meta.thermo[meta.pathIndex];
+  if (mode === "x") {
+    if (state.settings.cascadeThermoX) {
+      meta.thermo.slice(meta.pathIndex).forEach((/** @type {number} */ c) => {
+        state.xMarks.add(c);
+        state.marks.delete(c);
+      });
+    } else {
+      state.xMarks.add(cell);
+      state.marks.delete(cell);
+    }
+  } else {
+    if (state.settings.cascadeThermoX) {
+      meta.thermo.slice(0, meta.pathIndex + 1).forEach((/** @type {number} */ c) => state.xMarks.delete(c));
+    } else {
+      state.xMarks.delete(cell);
+    }
+  }
   saveProgress();
   renderPuzzle();
+  maybeReveal();
 }
 
 function cellClass(index) {
@@ -610,6 +705,7 @@ function saveProgress() {
 function loadProgress() {
   state.marks.clear();
   state.xMarks.clear();
+  clearHistory();
   const key = progressKey();
   if (!key) return;
 
@@ -631,12 +727,59 @@ function loadProgress() {
   }
 }
 
-function clueEl(clue, count) {
+/**
+ * @param {number} clue
+ * @param {number} count
+ * @param {"row" | "col"} axis
+ * @param {number} index
+ */
+function clueEl(clue, count, axis, index) {
   const element = document.createElement("div");
   const stateClass = count === clue ? "met" : count > clue ? "over" : "";
   element.className = `col-clue ${stateClass}`;
-  element.textContent = clue;
+  element.textContent = String(clue);
+  if (state.settings.autoXAxis && count === clue && clue > 0 && !axisFullyResolved(axis, index)) {
+    element.classList.add("clickable");
+    element.setAttribute("role", "button");
+    element.setAttribute("tabindex", "0");
+    element.setAttribute("aria-label", `Fill remaining ${axis === "row" ? `row ${index + 1}` : `column ${index + 1}`} cells with X`);
+    element.addEventListener("click", () => fillAxisWithX(axis, index));
+    element.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fillAxisWithX(axis, index);
+      }
+    });
+  }
   return element;
+}
+
+function fillAxisWithX(axis, index) {
+  const size = state.puzzle.size;
+  const targets = [];
+  for (let i = 0; i < size; i += 1) {
+    const cell = axis === "row" ? index * size + i : i * size + index;
+    if (!state.marks.has(cell) && !state.xMarks.has(cell)) targets.push(cell);
+  }
+  if (targets.length === 0) return;
+  pushHistory();
+  targets.forEach((cell) => state.xMarks.add(cell));
+  saveProgress();
+  renderPuzzle();
+  maybeReveal();
+}
+
+/**
+ * @param {"row" | "col"} axis
+ * @param {number} index
+ */
+function axisFullyResolved(axis, index) {
+  const size = state.puzzle.size;
+  for (let i = 0; i < size; i += 1) {
+    const cell = axis === "row" ? index * size + i : i * size + index;
+    if (!state.marks.has(cell) && !state.xMarks.has(cell)) return false;
+  }
+  return true;
 }
 
 function rowCount(row) {
