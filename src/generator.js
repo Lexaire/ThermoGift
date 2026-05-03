@@ -705,7 +705,7 @@ export function decodeIdV2(id) {
   const r = new BitReader(idToBits(id.slice(3)));
 
   const minor = r.readFixed(4);
-  if (minor !== T2_VERSION_MINOR) {
+  if (minor !== 0 && minor !== 1) {
     throw new Error(`Puzzle uses a newer format (t2 minor=${minor}). Update the app.`);
   }
   const size = r.readVarint();
@@ -743,11 +743,26 @@ export function decodeIdV2(id) {
     thermos.push(path);
   }
 
-  const clueBits = bitsForRange(size);
-  const rowClues = Array.from({ length: size }, () => r.readFixed(clueBits));
-  const colClues = Array.from({ length: size }, () => r.readFixed(clueBits));
-  for (const clue of [...rowClues, ...colClues]) {
-    if (clue > size) throw new Error("Bad clue value");
+  let rowClues;
+  let colClues;
+  let legacySolution;
+  let legacyFillLengths;
+  if (minor === 0) {
+    legacyFillLengths = thermos.map((thermo) => {
+      const value = r.readVarint();
+      if (value > thermo.length) throw new Error("Bad fillLength");
+      return value;
+    });
+    legacySolution = solutionFromLengths(size, thermos, legacyFillLengths);
+    rowClues = countsByRow(legacySolution, size);
+    colClues = countsByCol(legacySolution, size);
+  } else {
+    const clueBits = bitsForRange(size);
+    rowClues = Array.from({ length: size }, () => r.readFixed(clueBits));
+    colClues = Array.from({ length: size }, () => r.readFixed(clueBits));
+    for (const clue of [...rowClues, ...colClues]) {
+      if (clue > size) throw new Error("Bad clue value");
+    }
   }
 
   const cipherByteLen = r.readVarint();
@@ -770,5 +785,6 @@ export function decodeIdV2(id) {
     cipherBytes,
     checksum,
     format: "t2",
+    ...(legacySolution ? { solution: legacySolution, fillLengths: legacyFillLengths } : {}),
   };
 }
