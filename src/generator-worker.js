@@ -23,15 +23,18 @@ self.addEventListener("message", (event) => {
     const key = solutionKeyBytes(puzzle.solution, puzzle.size, secretBytes.length);
     const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
     const checksum = checksumForBytes(secretBytes, puzzle.solution, puzzle.size);
+    const rowClues = countsByRow(puzzle.solution, puzzle.size);
+    const colClues = countsByCol(puzzle.solution, puzzle.size);
     const id = encodeIdV2({
       size: puzzle.size,
       shapeStyle: puzzle.shapeStyle,
       thermos: puzzle.thermos,
-      fillLengths: puzzle.fillLengths,
+      rowClues,
+      colClues,
       cipherBytes,
       checksum,
     });
-    self.postMessage({ ok: true, id });
+    self.postMessage({ ok: true, id, solution: puzzle.solution, fillLengths: puzzle.fillLengths });
   } catch (error) {
     self.postMessage({ ok: false, error: error.message });
   }

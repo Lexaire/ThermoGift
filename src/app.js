@@ -146,12 +146,13 @@ els.newPuzzle.addEventListener("click", () => {
 els.creator.addEventListener("submit", (event) => {
   event.preventDefault();
   const code = els.giftCode.value;
-  if (!state.puzzle?.solution) {
-    setCreatorMessage("Open a puzzle first, then embed your code.", true);
+  const solution = currentSolutionForEmbed();
+  if (!solution) {
+    setCreatorMessage("Solve this puzzle or create a new one to embed a code.", true);
     return;
   }
   try {
-    const id = embedSecretIntoCurrent(state.puzzle, code);
+    const id = embedSecretIntoCurrent(state.puzzle, solution, code);
     const title = els.giftTitle.value.trim();
     const url = new URL(window.location.href);
     const params = new URLSearchParams();
@@ -172,17 +173,26 @@ els.creator.addEventListener("submit", (event) => {
   }
 });
 
-function embedSecretIntoCurrent(puzzle, code) {
+function currentSolutionForEmbed() {
+  const puzzle = state.puzzle;
+  if (!puzzle) return null;
+  if (puzzle.solution) return puzzle.solution;
+  if (!isSolved()) return null;
+  return Array.from({ length: puzzle.size * puzzle.size }, (_, index) => state.marks.has(index));
+}
+
+function embedSecretIntoCurrent(puzzle, solution, code) {
   const secretBytes = new TextEncoder().encode(code);
   if (secretBytes.length > 4096) throw new Error("Code too long (max 4096 UTF-8 bytes).");
-  const key = solutionKeyBytes(puzzle.solution, puzzle.size, secretBytes.length);
+  const key = solutionKeyBytes(solution, puzzle.size, secretBytes.length);
   const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
-  const checksum = checksumForBytes(secretBytes, puzzle.solution, puzzle.size);
+  const checksum = checksumForBytes(secretBytes, solution, puzzle.size);
   return encodeIdV2({
     size: puzzle.size,
     shapeStyle: puzzle.shapeStyle,
     thermos: puzzle.thermos,
-    fillLengths: puzzle.fillLengths,
+    rowClues: puzzle.rowClues,
+    colClues: puzzle.colClues,
     cipherBytes,
     checksum,
   });
@@ -347,6 +357,13 @@ function loadFromId(id, opts = { isSecret: true }) {
     renderPuzzle();
   } catch (error) {
     if (opts.isSecret) localStorage.removeItem("thermogift:lastPuzzle");
+    if (/newer format/i.test(error?.message ?? "")) {
+      localStorage.removeItem("thermogift:lastPuzzleTitle");
+      for (let i = localStorage.length - 1; i >= 0; i -= 1) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith("thermogift:progress:")) localStorage.removeItem(key);
+      }
+    }
     revealGamePanel();
     els.hintText.hidden = false;
     els.hintText.textContent = "That puzzle link could not be read. Generate a new one below.";
@@ -400,11 +417,11 @@ function generatePuzzleId(presetId, shapeStyle, code) {
     let settled = false;
     let lastError = null;
 
-    const finishOk = (id) => {
+    const finishOk = (payload) => {
       if (settled) return;
       settled = true;
       workers.forEach((w) => w.terminate());
-      resolve(id);
+      resolve(payload);
     };
     const finishFail = () => {
       if (settled) return;
@@ -418,7 +435,7 @@ function generatePuzzleId(presetId, shapeStyle, code) {
       workers.push(worker);
       worker.addEventListener("message", (event) => {
         if (event.data?.ok) {
-          finishOk(event.data.id);
+          finishOk({ id: event.data.id, solution: event.data.solution, fillLengths: event.data.fillLengths });
         } else {
           lastError = new Error(event.data?.error ?? "Generation failed");
           pending -= 1;
@@ -444,8 +461,12 @@ async function generateFreshPuzzle(presetId, shapeStyle) {
   els.hintText.hidden = true;
   els.hintText.textContent = "";
   try {
-    const id = await generatePuzzleId(presetId, shapeStyle, randomFreshCode());
+    const { id, solution, fillLengths } = await generatePuzzleId(presetId, shapeStyle, randomFreshCode());
     loadFromId(id, { isSecret: false });
+    if (state.puzzle?.id === id) {
+      state.puzzle.solution = solution;
+      state.puzzle.fillLengths = fillLengths;
+    }
   } catch (error) {
     revealGamePanel();
     els.hintText.hidden = false;

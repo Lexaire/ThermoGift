@@ -593,7 +593,7 @@ export function hashString(value) {
 //   - Structural changes (per-cell layout, new variants) bump `minor` or
 //     `variant` so old decoders refuse instead of misrendering.
 
-export const T2_VERSION_MINOR = 0;
+export const T2_VERSION_MINOR = 1;
 const T2_MAX_SIZE = 64;
 const T2_MAX_CIPHER_BYTES = 4096;
 const T2_MAX_TRAILER_BITS = 4096;
@@ -659,11 +659,12 @@ export function checksumForBytes(secretBytes, solution, size) {
 }
 
 export function encodeIdV2(payload) {
-  const { size, shapeStyle, thermos, fillLengths, cipherBytes, checksum } = payload;
+  const { size, shapeStyle, thermos, rowClues, colClues, cipherBytes, checksum } = payload;
   const shapeIdx = SHAPE_STYLES.indexOf(shapeStyle);
   if (shapeIdx < 0) throw new Error("Bad shape style");
   if (size < 4 || size > T2_MAX_SIZE) throw new Error("Bad size");
   if (cipherBytes.length > T2_MAX_CIPHER_BYTES) throw new Error("Cipher too long");
+  if (rowClues.length !== size || colClues.length !== size) throw new Error("Bad clue length");
 
   const cellInfo = new Map();
   thermos.forEach((thermo, tIdx) => {
@@ -676,20 +677,20 @@ export function encodeIdV2(payload) {
   w.writeVarint(shapeIdx);
   w.writeVarint(0);
 
-  const bulbOrder = [];
   for (let cell = 0; cell < size * size; cell += 1) {
     const info = cellInfo.get(cell);
     if (!info) throw new Error(`Cell ${cell} not in any thermo`);
     if (info.pos === 0) {
       w.writeFixed(0, 1);
-      bulbOrder.push(info.tIdx);
     } else {
       w.writeFixed(1, 1);
       const predecessor = thermos[info.tIdx][info.pos - 1];
       w.writeFixed(directionBetween(cell, predecessor, size), 2);
     }
   }
-  for (const tIdx of bulbOrder) w.writeVarint(fillLengths[tIdx]);
+  const clueBits = bitsForRange(size);
+  for (const clue of rowClues) w.writeFixed(clue, clueBits);
+  for (const clue of colClues) w.writeFixed(clue, clueBits);
 
   w.writeVarint(cipherBytes.length);
   for (const b of cipherBytes) w.writeFixed(b & 0xff, 8);
@@ -742,11 +743,12 @@ export function decodeIdV2(id) {
     thermos.push(path);
   }
 
-  const fillLengths = thermos.map((thermo) => {
-    const value = r.readVarint();
-    if (value > thermo.length) throw new Error("Bad fillLength");
-    return value;
-  });
+  const clueBits = bitsForRange(size);
+  const rowClues = Array.from({ length: size }, () => r.readFixed(clueBits));
+  const colClues = Array.from({ length: size }, () => r.readFixed(clueBits));
+  for (const clue of [...rowClues, ...colClues]) {
+    if (clue > size) throw new Error("Bad clue value");
+  }
 
   const cipherByteLen = r.readVarint();
   if (cipherByteLen > T2_MAX_CIPHER_BYTES) throw new Error("Cipher too long");
@@ -759,15 +761,12 @@ export function decodeIdV2(id) {
   if (trailerBitCount > T2_MAX_TRAILER_BITS) throw new Error("Trailer too long");
   for (let i = 0; i < trailerBitCount; i += 1) r.readFixed(1);
 
-  const solution = solutionFromLengths(size, thermos, fillLengths);
   return {
     size,
     shapeStyle,
     thermos,
-    fillLengths,
-    solution,
-    rowClues: countsByRow(solution, size),
-    colClues: countsByCol(solution, size),
+    rowClues,
+    colClues,
     cipherBytes,
     checksum,
     format: "t2",
