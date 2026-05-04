@@ -74,9 +74,18 @@
         </div>
 
         <div class="board-controls">
+          <button id="newPuzzle" type="button">New puzzle</button>
+          <button id="resetPuzzle" type="button" class="ghost-button">Reset grid</button>
           <label>
-            Difficulty
-            <select id="newDifficulty">
+            Type
+            <select id="newPuzzleType">
+              <option value="thermometers" selected>Thermometers</option>
+              <option value="tents">Tents</option>
+            </select>
+          </label>
+          <label>
+            Size
+            <select id="newSize">
               <option value="tiny" selected>Beginner 4x4</option>
               <option value="easy">Easy 6x6</option>
               <option value="normal">Normal 8x8</option>
@@ -90,15 +99,13 @@
               <option value="massive">Lunatic 26x26</option>
             </select>
           </label>
-          <label>
-            Thermometers
+          <label id="shapeLabel">
+            Shape
             <select id="newShapeStyle">
               <option value="curved">Curved</option>
               <option value="straight" selected>Straight only</option>
             </select>
           </label>
-          <button id="newPuzzle" type="button">New puzzle</button>
-          <button id="resetPuzzle" type="button" class="ghost-button">Reset grid</button>
         </div>
 
         <p class="hint" id="hintText" hidden></p>
@@ -160,6 +167,8 @@
           <button class="settings-done">Done</button>
         </form>
       </dialog>
+
+      <div class="sunset-overlay" id="sunsetOverlay" hidden></div>
 
       <dialog id="winDialog">
         <h2 id="winTitle">Secret unlocked!</h2>

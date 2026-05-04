@@ -10,11 +10,12 @@ import {
   solutionKeyBytes,
   checksumForBytes,
 } from "./common/cipher.js";
+import { BitReader, idToBits } from "./common/bits.js";
 import thermometers from "./puzzles/thermometers/index.js";
+import tents from "./puzzles/tents/index.js";
 
-// All shipped t1/t2 puzzles are thermometers. As more types are added this
-// dispatch-by-prefix stays the same; t2 ids embed `variant` and the per-type
-// module is responsible for refusing unknown variants.
+const MODULES = { thermometers, tents };
+const VARIANT_TO_MODULE = { [thermometers.variant]: thermometers, [tents.variant]: tents };
 const DEFAULT_MODULE = thermometers;
 
 /** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
@@ -59,8 +60,10 @@ const els = {
   hintText: /** @type {HTMLElement} */ (document.querySelector("#hintText")),
   undoMove: /** @type {HTMLButtonElement} */ (document.querySelector("#undoMove")),
   resetPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#resetPuzzle")),
-  newDifficulty: /** @type {HTMLSelectElement} */ (document.querySelector("#newDifficulty")),
+  newSize: /** @type {HTMLSelectElement} */ (document.querySelector("#newSize")),
+  newPuzzleType: /** @type {HTMLSelectElement} */ (document.querySelector("#newPuzzleType")),
   newShapeStyle: /** @type {HTMLSelectElement} */ (document.querySelector("#newShapeStyle")),
+  shapeLabel: /** @type {HTMLElement} */ (document.querySelector("#shapeLabel")),
   newPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#newPuzzle")),
   winDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#winDialog")),
   winTitle: /** @type {HTMLElement} */ (document.querySelector("#winTitle")),
@@ -70,6 +73,9 @@ const els = {
   themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
   settingsToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#settingsToggle")),
   settingsDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#settingsDialog")),
+  settingsForm: /** @type {HTMLElement} */ (document.querySelector("#settingsDialog .settings-form")),
+  settingsIntro: /** @type {HTMLElement} */ (document.querySelector("#settingsDialog .settings-intro")),
+  sunsetOverlay: /** @type {HTMLElement} */ (document.querySelector("#sunsetOverlay")),
 };
 
 /** @type {readonly ("auto" | "light" | "dark")[]} */
@@ -104,41 +110,121 @@ els.settingsToggle.addEventListener("click", () => {
   els.settingsDialog.showModal();
 });
 
-const savedNewDifficulty = localStorage.getItem("thermogift:newDifficulty");
-if (savedNewDifficulty && [...els.newDifficulty.options].some((opt) => opt.value === savedNewDifficulty)) {
-  els.newDifficulty.value = savedNewDifficulty;
-}
-const savedNewShape = localStorage.getItem("thermogift:newShapeStyle");
-if (savedNewShape && [...els.newShapeStyle.options].some((opt) => opt.value === savedNewShape)) {
-  els.newShapeStyle.value = savedNewShape;
+function activeModule() {
+  return MODULES[els.newPuzzleType.value] ?? DEFAULT_MODULE;
 }
 
-// Shape options stay selectable. When shape changes, grey out difficulty
-// options the constructive generator can't reach in that shape and bump
-// the selection to the largest still-allowed difficulty.
-function syncDifficultyOptionsForShape() {
-  const shape = els.newShapeStyle.value;
-  let lastAllowed = null;
-  for (const opt of els.newDifficulty.options) {
-    const ok = DEFAULT_MODULE.availableShapesFor(opt.value).includes(shape);
-    opt.disabled = !ok;
-    if (ok) lastAllowed = opt.value;
-  }
-  const currentOpt = [...els.newDifficulty.options].find((o) => o.value === els.newDifficulty.value);
-  if ((!currentOpt || currentOpt.disabled) && lastAllowed) {
-    els.newDifficulty.value = lastAllowed;
-  }
-}
-syncDifficultyOptionsForShape();
+function populateControlsForModule() {
+  const mod = activeModule();
 
-els.newDifficulty.addEventListener("change", () => localStorage.setItem("thermogift:newDifficulty", els.newDifficulty.value));
+  if (mod.rulesText && els.rulesPanel) {
+    const p = els.rulesPanel.querySelector("p");
+    if (p) p.textContent = mod.rulesText;
+  }
+
+  els.newSize.innerHTML = "";
+  for (const [key, preset] of Object.entries(mod.presets)) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = preset.label;
+    els.newSize.append(opt);
+  }
+  const savedSize = localStorage.getItem("thermogift:newSize");
+  if (savedSize && [...els.newSize.options].some((o) => o.value === savedSize)) {
+    els.newSize.value = savedSize;
+  }
+
+  const shapes = mod.shapeStyles ?? [];
+  els.newShapeStyle.innerHTML = "";
+  for (const shape of shapes) {
+    const opt = document.createElement("option");
+    opt.value = shape;
+    opt.textContent = shape === "curved" ? "Curved" : shape === "straight" ? "Straight only" : shape;
+    els.newShapeStyle.append(opt);
+  }
+  if (shapes.length <= 1 && els.shapeLabel) {
+    els.shapeLabel.hidden = true;
+  } else if (els.shapeLabel) {
+    els.shapeLabel.hidden = false;
+  }
+  const savedShape = localStorage.getItem("thermogift:newShapeStyle");
+  if (savedShape && [...els.newShapeStyle.options].some((o) => o.value === savedShape)) {
+    els.newShapeStyle.value = savedShape;
+  }
+
+  populateSettings(mod);
+}
+
+function populateSettings(mod) {
+  if (!els.settingsForm) return;
+  const schema = mod.settingsSchema ?? [];
+  els.settingsForm.innerHTML = "";
+
+  if (schema.length === 0) {
+    if (els.settingsIntro) els.settingsIntro.textContent = "No assists available for this puzzle type.";
+    const done = document.createElement("button");
+    done.className = "settings-done";
+    done.textContent = "Done";
+    done.type = "button";
+    done.addEventListener("click", () => els.settingsDialog.close());
+    els.settingsForm.append(done);
+    return;
+  }
+
+  if (els.settingsIntro) els.settingsIntro.textContent = "Optional shortcuts.";
+
+  for (const s of schema) {
+    const label = document.createElement("label");
+    label.className = "setting-row";
+
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = s.id;
+    const stored = localStorage.getItem(s.key);
+    input.checked = stored === null ? (s.defaultOn ?? false) : stored !== "false";
+
+    const name = document.createElement("span");
+    name.className = "setting-label";
+    name.textContent = s.label;
+
+    const desc = document.createElement("span");
+    desc.className = "setting-desc";
+    desc.textContent = s.desc;
+
+    input.addEventListener("change", () => {
+      localStorage.setItem(s.key, String(input.checked));
+    });
+
+    label.append(input, name, desc);
+    els.settingsForm.append(label);
+  }
+
+  const done = document.createElement("button");
+  done.className = "settings-done";
+  done.textContent = "Done";
+  done.type = "button";
+  done.addEventListener("click", () => els.settingsDialog.close());
+  els.settingsForm.append(done);
+}
+
+const savedType = localStorage.getItem("thermogift:newPuzzleType");
+if (savedType && els.newPuzzleType && [...els.newPuzzleType.options].some((o) => o.value === savedType)) {
+  els.newPuzzleType.value = savedType;
+}
+populateControlsForModule();
+
+els.newPuzzleType?.addEventListener("change", () => {
+  localStorage.setItem("thermogift:newPuzzleType", els.newPuzzleType.value);
+  populateControlsForModule();
+});
+
+els.newSize.addEventListener("change", () => localStorage.setItem("thermogift:newSize", els.newSize.value));
 els.newShapeStyle.addEventListener("change", () => {
   localStorage.setItem("thermogift:newShapeStyle", els.newShapeStyle.value);
-  syncDifficultyOptionsForShape();
 });
 
 els.newPuzzle.addEventListener("click", () => {
-  generateFreshPuzzle(els.newDifficulty.value, els.newShapeStyle.value);
+  generateFreshPuzzle(els.newSize.value, els.newShapeStyle.value);
 });
 
 els.creator.addEventListener("submit", (event) => {
@@ -302,7 +388,12 @@ function loadFromLocation() {
     return;
   }
   if (params.get("create") === "1") setCreatorOpen(true);
-  generateFreshPuzzle(els.newDifficulty.value, els.newShapeStyle.value);
+  const lastPlayed = localStorage.getItem("thermogift:lastPlayed");
+  if (lastPlayed) {
+    loadFromId(lastPlayed, { isSecret: false });
+    if (state.puzzle) return;
+  }
+  generateFreshPuzzle(els.newSize.value, els.newShapeStyle.value);
 }
 
 /** @param {string} id @param {{ isSecret?: boolean, title?: string }} [opts] */
@@ -343,6 +434,7 @@ function loadFromId(id, opts = { isSecret: true }) {
     updateUndoButton();
   } catch (error) {
     if (opts.isSecret) localStorage.removeItem("thermogift:lastPuzzle");
+    localStorage.removeItem("thermogift:lastPlayed");
     if (/newer format/i.test(error?.message ?? "")) {
       localStorage.removeItem("thermogift:lastPuzzleTitle");
       for (let i = localStorage.length - 1; i >= 0; i -= 1) {
@@ -356,11 +448,16 @@ function loadFromId(id, opts = { isSecret: true }) {
   }
 }
 
-function pickModuleForId(/** @type {string} */ _id) {
-  // Today every shipped id is a thermometer puzzle. Tomorrow the t2 envelope
-  // can carry a different `variant`; routing by variant lives inside each
-  // module's decodeId, so the shell only needs to find a module that accepts
-  // the prefix.
+function pickModuleForId(/** @type {string} */ id) {
+  if (id.startsWith("t1-")) return thermometers;
+  if (id.startsWith("t2-")) {
+    const r = new BitReader(idToBits(id.slice(3)));
+    r.readFixed(4); // minor
+    r.readVarint(); // size
+    r.readVarint(); // shapeIdx
+    const variant = r.readVarint();
+    return VARIANT_TO_MODULE[variant] ?? DEFAULT_MODULE;
+  }
   return DEFAULT_MODULE;
 }
 
@@ -469,21 +566,33 @@ async function generateFreshPuzzle(presetId, shape) {
   if (state.generatingFresh) return;
   state.generatingFresh = true;
   const wasLabel = els.newPuzzle.textContent;
-  els.newPuzzle.disabled = true;
-  els.newPuzzle.textContent = "Generating…";
   els.hintText.hidden = true;
   els.hintText.textContent = "";
+
+  // Delayed spinner: only show "Loading…" if generation takes long enough
+  // that the user actually needs feedback. For fast presets (tents 15×15 is
+  // ~1ms now, thermos 8×8 is ~3ms) the spinner would flash and feel laggier
+  // than no feedback at all.
+  const SPINNER_DELAY_MS = 150;
+  const spinnerTimer = window.setTimeout(() => {
+    els.newPuzzle.disabled = true;
+    els.newPuzzle.textContent = "Loading…";
+  }, SPINNER_DELAY_MS);
+
   try {
-    const result = await generatePuzzleId(DEFAULT_MODULE.id, presetId, shape, randomFreshCode());
+    const mod = activeModule();
+    const result = await generatePuzzleId(mod.id, presetId, shape, randomFreshCode());
+    localStorage.removeItem("thermogift:lastPlayed");
     loadFromId(result.id, { isSecret: false });
     if (state.puzzle?.id === result.id) {
-      DEFAULT_MODULE.applyCachedFromWorker?.(state.puzzle, result);
+      mod.applyCachedFromWorker?.(state.puzzle, result);
     }
   } catch (error) {
     revealGamePanel();
     els.hintText.hidden = false;
     els.hintText.textContent = error?.message || "Could not generate that puzzle. Try a smaller size.";
   } finally {
+    clearTimeout(spinnerTimer);
     state.generatingFresh = false;
     els.newPuzzle.disabled = false;
     els.newPuzzle.textContent = wasLabel;
@@ -566,6 +675,10 @@ function showWin(title, message, secret) {
     }
   }
   els.winDialog.showModal();
+  els.sunsetOverlay.classList.remove("active", "fade-out");
+  els.sunsetOverlay.hidden = false;
+  void els.sunsetOverlay.offsetWidth;
+  els.sunsetOverlay.classList.add("active");
 }
 
 /** @param {string} secret @returns {string | null} */
@@ -639,6 +752,7 @@ function saveProgress() {
     marks: [...state.marks],
     xMarks: [...state.xMarks],
   }));
+  localStorage.setItem("thermogift:lastPlayed", state.puzzle.id);
 }
 
 function loadProgress() {
@@ -665,5 +779,13 @@ function loadProgress() {
     localStorage.removeItem(key);
   }
 }
+
+els.winDialog.addEventListener("close", () => {
+  els.sunsetOverlay.classList.add("fade-out");
+  setTimeout(() => {
+    els.sunsetOverlay.hidden = true;
+    els.sunsetOverlay.classList.remove("active", "fade-out");
+  }, 1200);
+});
 
 loadFromLocation();

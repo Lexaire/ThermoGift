@@ -246,7 +246,7 @@ button:disabled:hover {
   justify-content: center;
   align-items: start;
   gap: 12px;
-  margin-bottom: 18px;
+  margin-bottom: 8px;
   flex-wrap: wrap;
 }
 
@@ -384,7 +384,7 @@ select {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
-  margin-top: 30px;
+  margin-top: 16px;
   align-items: start;
   container-type: inline-size;
 }
@@ -498,11 +498,14 @@ select {
   align-items: center;
   gap: 10px;
   --grid-size: 8;
+  /* Cap cells larger on small grids so 4x4–7x7 don't look tiny on desktop;
+     stays at 48px once grid >=8. */
+  --cell-max: max(48px, calc((8 - var(--grid-size, 8)) * 6px + 48px));
   /* Shrink cells when the board overflows its container. 100cqw is the
      game-panel's width (excluding any scrollbar, unlike 100vw). The "+2"
      accounts for the row-clues column on the left and the phantom right
      column that mirrors it for centering on desktop. */
-  --cell: min(48px, calc((100cqw - 16px) / (var(--grid-size, 8) + 2)));
+  --cell: min(var(--cell-max), calc((100cqw - 16px) / (var(--grid-size, 8) + 2)));
 }
 
 .col-clues {
@@ -618,12 +621,142 @@ select {
   border-color: var(--cell-filled-border);
 }
 
+.cell.tree-cell {
+  cursor: default;
+  border-color: var(--line);
+  background: light-dark(#e8f5e9, #1a2e1a);
+}
+
+.cell.tree-cell:hover {
+  border-color: var(--line);
+  background: light-dark(#e8f5e9, #1a2e1a);
+}
+
+.cell.tent-cell {
+  background: light-dark(#fff8e1, #2a2210);
+  border-color: light-dark(#e0c97a, #4a3d1a);
+}
+
+.cell.tent-cell:hover {
+  background: light-dark(#fff3cd, #332a14);
+}
+
+.cell.tent-error {
+  border-color: light-dark(#dc3545, #ff4444) !important;
+  box-shadow: inset 0 0 0 1px light-dark(#dc3545, #ff4444);
+}
+
+.cell-icon {
+  position: absolute;
+  inset: 8%;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.tree-shadow {
+  fill: light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.25));
+}
+
+.tree-trunk {
+  fill: light-dark(#6D4C2A, #A07850);
+  stroke: none;
+}
+
+.tree-foliage-dark {
+  fill: light-dark(#2E7D32, #4CAF50);
+  stroke: none;
+}
+
+.tree-foliage-mid {
+  fill: light-dark(#43A047, #66BB6A);
+  stroke: none;
+}
+
+.tree-foliage-light {
+  fill: light-dark(#66BB6A, #81C784);
+  stroke: none;
+}
+
+.tent-ground {
+  stroke: light-dark(#8D6E3A, #A08050);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+
+.tent-left {
+  fill: light-dark(#E8A525, #D4952A);
+  stroke: none;
+}
+
+.tent-right {
+  fill: light-dark(#D4941E, #C08520);
+  stroke: none;
+}
+
+.tent-outline {
+  fill: none;
+  stroke: light-dark(#A0722A, #806020);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+.tent-entrance {
+  fill: light-dark(#C4851A, #A06E18);
+  stroke: none;
+  opacity: 0.7;
+}
+
+.tent-ridge {
+  stroke: light-dark(#A0722A, #806020);
+  stroke-width: 0.75;
+  stroke-linecap: round;
+}
+
 .x-mark {
   position: absolute;
   inset: 18%;
   z-index: 2;
   pointer-events: none;
   overflow: visible;
+}
+
+.grass-icon {
+  position: absolute;
+  inset: 12%;
+  z-index: 2;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.grass-mound {
+  fill: light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.2));
+}
+
+.grass-blade-foliage {
+  stroke: none;
+}
+
+.grass-foliage-dark {
+  fill: light-dark(#43A047, #4a8c50);
+  opacity: 0.7;
+}
+
+.grass-foliage-mid {
+  fill: light-dark(#66BB6A, #5a9a60);
+  opacity: 0.65;
+}
+
+.grass-foliage-light {
+  fill: light-dark(#81C784, #6aaa6e);
+  opacity: 0.6;
+}
+
+.cell.grass-marked {
+  background: light-dark(#eef7e3, #1e3220);
+}
+
+.cell.grass-marked:hover {
+  background: light-dark(#e4f1d4, #253a26);
 }
 
 .x-mark-line {
@@ -743,13 +876,92 @@ dialog::backdrop {
   justify-content: flex-end;
 }
 
+/* Sunset win celebration */
+.sunset-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+  transition: opacity 1.2s ease;
+}
+
+.sunset-overlay[hidden] {
+  display: none;
+}
+
+.sunset-overlay.fade-out {
+  opacity: 0;
+}
+
+.sunset-overlay::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -30%;
+  bottom: 0;
+  background: linear-gradient(
+    to top,
+    rgba(255, 202, 40, 0.6) 0%,
+    rgba(255, 143, 0, 0.5) 10%,
+    rgba(255, 61, 0, 0.4) 22%,
+    rgba(244, 67, 54, 0.32) 32%,
+    rgba(233, 30, 99, 0.25) 44%,
+    rgba(156, 39, 176, 0.18) 58%,
+    rgba(63, 81, 181, 0.12) 72%,
+    transparent 88%
+  );
+  opacity: 0;
+  transform: translateY(30%);
+}
+
+.sunset-overlay.active::before {
+  animation: sunset-rise 2.5s ease-out forwards;
+}
+
+@keyframes sunset-rise {
+  0% { opacity: 0; transform: translateY(30%); }
+  25% { opacity: 1; }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.sunset-overlay::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 15%;
+  width: 55vmin;
+  height: 55vmin;
+  border-radius: 50%;
+  background: radial-gradient(circle,
+    rgba(255, 249, 196, 0.45) 0%,
+    rgba(255, 213, 79, 0.3) 20%,
+    rgba(255, 179, 0, 0.18) 40%,
+    rgba(255, 111, 0, 0.08) 60%,
+    transparent 80%
+  );
+  transform: translate(-50%, 50%) scale(1.8);
+  opacity: 0;
+}
+
+.sunset-overlay.active::after {
+  animation: sun-settle 3s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
+}
+
+@keyframes sun-settle {
+  0% { transform: translate(-50%, 50%) scale(1.8); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translate(-50%, 50%) scale(1); opacity: 1; }
+}
+
 @media (max-width: 860px) {
   :root {
     --cell: clamp(34px, 10.35vw, 46px);
   }
 
   .shell {
-    width: min(100vw - 28px, 680px);
+    width: min(100vw - 12px, 680px);
     padding: 16px 0 28px;
   }
 
@@ -802,8 +1014,9 @@ dialog::backdrop {
   }
 
   .board-wrap {
-    --cell: min(64px, calc((100cqw - 16px) / (var(--grid-size, 8) + 1)));
-    align-items: flex-start;
+    --cell: min(64px, calc((100cqw - 4px) / (var(--grid-size, 8) + 1)));
+    margin-left: -4px;
+    padding-right: 8px;
   }
 
   .col-clues {

@@ -107,6 +107,13 @@ function puzzleLabel(puzzle) {
 const thermometers = {
   id: "thermometers",
   variant: T2_VARIANT,
+  rulesText: "Fill thermometers from the round bulb toward the rounded tip. A later segment cannot be filled unless every segment before it is filled. The numbers above and beside the grid tell how many red cells belong in that column or row. Right-click a cell to mark an X. The puzzle is solved when every count matches and each thermometer is filled bulb-first.",
+  settingsSchema: [
+    { id: "settingAutoXAxis", key: "thermogift:assist:autoXAxis", label: "Auto-X completed rows and columns", desc: "When a clue is met, click it to mark the rest of that row or column with X.", defaultOn: false },
+    { id: "settingCascadeThermoX", key: "thermogift:assist:cascadeThermoX", label: "Flood X's", desc: "Marking an X also floods X's up to the tip.", defaultOn: false },
+    { id: "settingCascadeThermoFill", key: "thermogift:assist:cascadeThermoFill", label: "Flood mercury to the bulb", desc: "Filling a cell also floods mercury back to the bulb.", defaultOn: true },
+    { id: "settingDimMatchedClues", key: "thermogift:assist:dimMatchedClues", label: "Dim row and column clues when met", desc: "Greys out a clue once its row or column count matches.", defaultOn: true },
+  ],
   presets: PRESETS,
   shapeStyles: SHAPE_STYLES,
   availableShapesFor,
