@@ -647,8 +647,8 @@ function setThermoMark(meta, mode) {
       state.marks.delete(cell);
     }
   }
-  saveProgress();
-  renderPuzzle();
+  scheduleSave();
+  scheduleRender();
   maybeReveal();
 }
 
@@ -677,8 +677,8 @@ function setThermoXMark(meta, mode) {
       state.xMarks.delete(cell);
     }
   }
-  saveProgress();
-  renderPuzzle();
+  scheduleSave();
+  scheduleRender();
   maybeReveal();
 }
 
@@ -910,6 +910,24 @@ function progressKey() {
   return state.puzzle?.id ? `thermogift:progress:${state.puzzle.id}` : "";
 }
 
+// Coalesce renders and progress saves to once per animation frame.
+// Drag fires pointerenter on every cell crossed; without this, every cell
+// triggers a full grid rebuild + localStorage write, which gets noticeably
+// laggy at 17×17 and brutal at 26×26.
+let pendingRender = false;
+function scheduleRender() {
+  if (pendingRender) return;
+  pendingRender = true;
+  requestAnimationFrame(() => { pendingRender = false; renderPuzzle(); });
+}
+
+let pendingSave = false;
+function scheduleSave() {
+  if (pendingSave) return;
+  pendingSave = true;
+  requestAnimationFrame(() => { pendingSave = false; saveProgress(); });
+}
+
 function saveProgress() {
   const key = progressKey();
   if (!key) return;
@@ -981,8 +999,8 @@ function fillAxisWithX(axis, index) {
   if (targets.length === 0) return;
   pushHistory();
   targets.forEach((cell) => state.xMarks.add(cell));
-  saveProgress();
-  renderPuzzle();
+  scheduleSave();
+  scheduleRender();
   maybeReveal();
 }
 
