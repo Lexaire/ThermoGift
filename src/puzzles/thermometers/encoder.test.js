@@ -1,17 +1,32 @@
 import { expect, test, describe } from "bun:test";
+import { decodeT2Envelope } from "../../common/t2-envelope.js";
 import {
-  decodeId,
-  decodeIdV2,
-  encodeIdV2,
+  countsByRow,
+  countsByCol,
   decodeCode,
   solutionKey,
   solutionKeyBytes,
   checksumFor,
   checksumForBytes,
-  countsByRow,
-  countsByCol,
-  solutionFromLengths,
-} from "./generator.js";
+} from "../../common/cipher.js";
+import { decodeT1, encodeT2, t2Variant, T2_VARIANT } from "./encoder.js";
+import { solutionFromLengths } from "./solver.js";
+
+const VARIANT_HANDLERS = { [T2_VARIANT]: t2Variant };
+const decodeIdV2 = (id) => {
+  const decoded = decodeT2Envelope(id, VARIANT_HANDLERS);
+  return {
+    size: decoded.size,
+    shapeStyle: decoded.body.shapeStyle,
+    thermos: decoded.body.thermos,
+    rowClues: decoded.body.rowClues,
+    colClues: decoded.body.colClues,
+    cipherBytes: decoded.cipherBytes,
+    checksum: decoded.checksum,
+    format: "t2",
+    ...(decoded.body.solution ? { solution: decoded.body.solution, fillLengths: decoded.body.fillLengths } : {}),
+  };
+};
 
 // Each fixture pins a synthetic golden URL plus everything needed to prove the
 // renderer would draw the right puzzle and the decoder would reveal the right
@@ -48,7 +63,7 @@ describe("t1 (legacy V1) URL", () => {
   const plaintext = "GoldenT1";
 
   test("decodes to the expected layout and clues", () => {
-    const decoded = decodeId(id);
+    const decoded = decodeT1(id);
     expect(decoded.size).toBe(4);
     expect(decoded.shapeStyle).toBe("curved");
     expect(decoded.thermos).toEqual(FOUR_BY_FOUR_THERMOS);
@@ -58,7 +73,7 @@ describe("t1 (legacy V1) URL", () => {
   });
 
   test("recovers the embedded plaintext using the solved grid", () => {
-    const decoded = decodeId(id);
+    const decoded = decodeT1(id);
     const recovered = decodeCode(decoded.cipher, solutionKey(decoded.solution, decoded.size));
     expect(recovered).toBe(plaintext);
     expect(checksumFor(plaintext, decoded.solution, decoded.size)).toBe(decoded.checksum);
@@ -67,7 +82,7 @@ describe("t1 (legacy V1) URL", () => {
   test("decodes a curved layout that exercises all four direction bits", () => {
     const curvedId = "t1-Ib9nmsi2NRCWYICQkrx31A";
     const curvedPlain = "CurvedT1";
-    const decoded = decodeId(curvedId);
+    const decoded = decodeT1(curvedId);
     expect(decoded.thermos).toEqual(CURVED_THERMOS_DECODED);
     expect(decoded.rowClues).toEqual(CURVED_ROW_CLUES);
     expect(decoded.colClues).toEqual(CURVED_COL_CLUES);
@@ -146,12 +161,14 @@ describe("t2 v1 (current format, clues only)", () => {
     const key = solutionKeyBytes(FOUR_BY_FOUR_SOLUTION, decoded.size, secretBytes.length);
     const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
     const checksum = checksumForBytes(secretBytes, FOUR_BY_FOUR_SOLUTION, decoded.size);
-    const reencoded = encodeIdV2({
-      size: decoded.size,
-      shapeStyle: decoded.shapeStyle,
-      thermos: decoded.thermos,
-      rowClues: decoded.rowClues,
-      colClues: decoded.colClues,
+    const reencoded = encodeT2({
+      puzzle: {
+        size: decoded.size,
+        shapeStyle: decoded.shapeStyle,
+        thermos: decoded.thermos,
+        rowClues: decoded.rowClues,
+        colClues: decoded.colClues,
+      },
       cipherBytes,
       checksum,
     });

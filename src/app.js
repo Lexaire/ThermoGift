@@ -1,22 +1,30 @@
+// Shell: navigation, theme, settings dialog, URL routing, worker plumbing,
+// progress save/load, history (undo), win-dialog, secret decoding. Knows
+// about marks/xMarks at a generic-grid level; the puzzle module owns the
+// board itself (rendering, glyphs, pointer handlers, cascade rules).
+
 import {
-  PRESETS,
-  availableShapesFor,
-  decodeId,
-  decodeCode,
   solutionKey,
+  decodeCode,
   checksumFor,
-  decodeIdV2,
-  encodeIdV2,
   solutionKeyBytes,
   checksumForBytes,
-} from "./generator.js";
+} from "./common/cipher.js";
+import thermometers from "./puzzles/thermometers/index.js";
+
+// All shipped t1/t2 puzzles are thermometers. As more types are added this
+// dispatch-by-prefix stays the same; t2 ids embed `variant` and the per-type
+// module is responsible for refusing unknown variants.
+const DEFAULT_MODULE = thermometers;
 
 /** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
 /** @typedef {{ kind: "mark" | "xMark", mode: string }} DragState */
 
-/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: DragState | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean, settings: { autoXAxis: boolean, cascadeThermoX: boolean, cascadeThermoFill: boolean, dimMatchedClues: boolean } }} */
+/** @type {{ puzzle: any, module: any, ui: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: DragState | null, touchPending: any, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean }} */
 const state = {
   puzzle: null,
+  module: null,
+  ui: null,
   marks: new Set(),
   xMarks: new Set(),
   history: [],
@@ -25,25 +33,9 @@ const state = {
   lastCreatedId: null,
   lastCreatedTitle: "",
   generatingFresh: false,
-  settings: {
-    autoXAxis: false,
-    cascadeThermoX: false,
-    cascadeThermoFill: true,
-    dimMatchedClues: true,
-  },
 };
 
 const HISTORY_LIMIT = 50;
-
-const SETTINGS_KEYS = /** @type {const} */ ({
-  autoXAxis: "thermogift:assist:autoXAxis",
-  cascadeThermoX: "thermogift:assist:cascadeThermoX",
-  cascadeThermoFill: "thermogift:assist:cascadeThermoFill",
-  dimMatchedClues: "thermogift:assist:dimMatchedClues",
-});
-
-const LONG_PRESS_MS = 350;
-const TOUCH_MOVE_THRESHOLD_PX = 10;
 
 const els = {
   creatorPanel: /** @type {HTMLElement} */ (document.querySelector("#creatorPanel")),
@@ -78,10 +70,6 @@ const els = {
   themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
   settingsToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#settingsToggle")),
   settingsDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#settingsDialog")),
-  settingAutoXAxis: /** @type {HTMLInputElement} */ (document.querySelector("#settingAutoXAxis")),
-  settingCascadeThermoX: /** @type {HTMLInputElement} */ (document.querySelector("#settingCascadeThermoX")),
-  settingCascadeThermoFill: /** @type {HTMLInputElement} */ (document.querySelector("#settingCascadeThermoFill")),
-  settingDimMatchedClues: /** @type {HTMLInputElement} */ (document.querySelector("#settingDimMatchedClues")),
 };
 
 /** @type {readonly ("auto" | "light" | "dark")[]} */
@@ -112,43 +100,8 @@ els.themeToggle.addEventListener("click", () => {
   applyTheme(next);
 });
 
-function loadSettings() {
-  state.settings.autoXAxis = localStorage.getItem(SETTINGS_KEYS.autoXAxis) === "true";
-  state.settings.cascadeThermoX = localStorage.getItem(SETTINGS_KEYS.cascadeThermoX) === "true";
-  state.settings.cascadeThermoFill = localStorage.getItem(SETTINGS_KEYS.cascadeThermoFill) !== "false";
-  state.settings.dimMatchedClues = localStorage.getItem(SETTINGS_KEYS.dimMatchedClues) !== "false";
-  els.settingAutoXAxis.checked = state.settings.autoXAxis;
-  els.settingCascadeThermoX.checked = state.settings.cascadeThermoX;
-  els.settingCascadeThermoFill.checked = state.settings.cascadeThermoFill;
-  els.settingDimMatchedClues.checked = state.settings.dimMatchedClues;
-}
-
-loadSettings();
-
 els.settingsToggle.addEventListener("click", () => {
   els.settingsDialog.showModal();
-});
-
-els.settingAutoXAxis.addEventListener("change", () => {
-  state.settings.autoXAxis = els.settingAutoXAxis.checked;
-  localStorage.setItem(SETTINGS_KEYS.autoXAxis, String(state.settings.autoXAxis));
-  if (state.puzzle) renderPuzzle();
-});
-
-els.settingCascadeThermoX.addEventListener("change", () => {
-  state.settings.cascadeThermoX = els.settingCascadeThermoX.checked;
-  localStorage.setItem(SETTINGS_KEYS.cascadeThermoX, String(state.settings.cascadeThermoX));
-});
-
-els.settingCascadeThermoFill.addEventListener("change", () => {
-  state.settings.cascadeThermoFill = els.settingCascadeThermoFill.checked;
-  localStorage.setItem(SETTINGS_KEYS.cascadeThermoFill, String(state.settings.cascadeThermoFill));
-});
-
-els.settingDimMatchedClues.addEventListener("change", () => {
-  state.settings.dimMatchedClues = els.settingDimMatchedClues.checked;
-  localStorage.setItem(SETTINGS_KEYS.dimMatchedClues, String(state.settings.dimMatchedClues));
-  if (state.puzzle) renderPuzzle();
 });
 
 const savedNewDifficulty = localStorage.getItem("thermogift:newDifficulty");
@@ -160,14 +113,14 @@ if (savedNewShape && [...els.newShapeStyle.options].some((opt) => opt.value === 
   els.newShapeStyle.value = savedNewShape;
 }
 
-// Both shape options stay selectable. When shape changes, grey out difficulty
-// options the constructive generator can't reach in that shape and bump the
-// selection to the largest still-allowed difficulty.
+// Shape options stay selectable. When shape changes, grey out difficulty
+// options the constructive generator can't reach in that shape and bump
+// the selection to the largest still-allowed difficulty.
 function syncDifficultyOptionsForShape() {
   const shape = els.newShapeStyle.value;
   let lastAllowed = null;
   for (const opt of els.newDifficulty.options) {
-    const ok = availableShapesFor(opt.value).includes(shape);
+    const ok = DEFAULT_MODULE.availableShapesFor(opt.value).includes(shape);
     opt.disabled = !ok;
     if (ok) lastAllowed = opt.value;
   }
@@ -222,7 +175,7 @@ function currentSolutionForEmbed() {
   const puzzle = state.puzzle;
   if (!puzzle) return null;
   if (puzzle.solution) return puzzle.solution;
-  if (!isSolved()) return null;
+  if (!stateIsSolved()) return null;
   return Array.from({ length: puzzle.size * puzzle.size }, (_, index) => state.marks.has(index));
 }
 
@@ -232,12 +185,8 @@ function embedSecretIntoCurrent(puzzle, solution, code) {
   const key = solutionKeyBytes(solution, puzzle.size, secretBytes.length);
   const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
   const checksum = checksumForBytes(secretBytes, solution, puzzle.size);
-  return encodeIdV2({
-    size: puzzle.size,
-    shapeStyle: puzzle.shapeStyle,
-    thermos: puzzle.thermos,
-    rowClues: puzzle.rowClues,
-    colClues: puzzle.colClues,
+  return state.module.encode({
+    puzzle: { ...puzzle, solution },
     cipherBytes,
     checksum,
   });
@@ -344,21 +293,6 @@ function updateUndoButton() {
   els.undoMove.title = empty ? "Nothing to undo" : "Undo last move";
 }
 
-window.addEventListener("pointerup", () => {
-  state.dragging = null;
-  cancelTouchPending();
-});
-
-window.addEventListener("pointercancel", () => {
-  state.dragging = null;
-  cancelTouchPending();
-});
-
-function cancelTouchPending() {
-  if (state.touchPending?.timer) clearTimeout(state.touchPending.timer);
-  state.touchPending = null;
-}
-
 function loadFromLocation() {
   const params = new URLSearchParams(window.location.search);
   const id = params.get("id");
@@ -374,52 +308,39 @@ function loadFromLocation() {
 /** @param {string} id @param {{ isSecret?: boolean, title?: string }} [opts] */
 function loadFromId(id, opts = { isSecret: true }) {
   try {
-    const payload = /** @type {any} */ (id.startsWith("t2-") ? decodeIdV2(id) : decodeId(id));
+    const module = pickModuleForId(id);
+    const puzzle = module.decodeId(id);
     const title = opts.title ?? "";
-    // Cache derived structures that don't change during play. Building these
-    // once at puzzle load avoids rebuilding them inside renderPuzzle, which
-    // can fire many times per second during drag.
-    const thermoByCell = new Map();
-    payload.thermos.forEach((/** @type {number[]} */ thermo, /** @type {number} */ thermoIndex) => {
-      thermo.forEach((/** @type {number} */ cell, /** @type {number} */ pathIndex) =>
-        thermoByCell.set(cell, { thermo, thermoIndex, pathIndex }));
-    });
-    const expectedTotal = payload.rowClues.reduce(
-      (/** @type {number} */ sum, /** @type {number} */ clue) => sum + clue, 0);
-    state.puzzle = {
-      shapeStyle: payload.shapeStyle,
-      size: payload.size,
-      thermos: payload.thermos,
-      fillLengths: payload.fillLengths,
-      solution: payload.solution,
-      rowClues: payload.rowClues,
-      colClues: payload.colClues,
-      cipher: payload.cipher,
-      cipherBytes: payload.cipherBytes,
-      checksum: payload.checksum,
-      format: payload.format ?? "t1",
-      id,
-      title,
-      isSecret: opts.isSecret !== false,
-      thermoByCell,
-      expectedTotal,
-    };
+    state.module = module;
+    state.puzzle = { ...puzzle, title, isSecret: opts.isSecret !== false };
+
     // Grid template CSS only depends on size — set it once per puzzle load.
-    const sizeRepeat = `repeat(${payload.size}, var(--cell))`;
+    const sizeRepeat = `repeat(${puzzle.size}, var(--cell))`;
     els.colClues.style.gridTemplateColumns = sizeRepeat;
     els.rowClues.style.gridTemplateRows = sizeRepeat;
     els.rowCluesRight.style.gridTemplateRows = sizeRepeat;
     els.board.style.gridTemplateColumns = sizeRepeat;
     els.board.style.gridTemplateRows = sizeRepeat;
-    els.board.parentElement.parentElement.style.setProperty("--grid-size", payload.size);
+    els.board.parentElement.parentElement.style.setProperty("--grid-size", puzzle.size);
     if (state.puzzle.isSecret) localStorage.setItem("thermogift:lastPuzzle", id);
     loadProgress();
     clearCreatorLink();
-    els.puzzleName.textContent = title || puzzleLabel(payload);
+    els.puzzleName.textContent = title || module.puzzleLabel(state.puzzle);
     els.hintText.hidden = true;
     els.hintText.textContent = "";
     revealGamePanel();
-    renderPuzzle();
+
+    state.ui?.dispose?.();
+    state.ui = module.attachUI({
+      boardEl: els.board,
+      rowCluesEl: els.rowClues,
+      colCluesEl: els.colClues,
+      rowCluesRightEl: els.rowCluesRight,
+      puzzle: state.puzzle,
+      stateApi: makeStateApi(),
+    });
+    state.ui.render();
+    updateUndoButton();
   } catch (error) {
     if (opts.isSecret) localStorage.removeItem("thermogift:lastPuzzle");
     if (/newer format/i.test(error?.message ?? "")) {
@@ -433,6 +354,39 @@ function loadFromId(id, opts = { isSecret: true }) {
     els.hintText.hidden = false;
     els.hintText.textContent = "That puzzle link could not be read. Generate a new one below.";
   }
+}
+
+function pickModuleForId(/** @type {string} */ _id) {
+  // Today every shipped id is a thermometer puzzle. Tomorrow the t2 envelope
+  // can carry a different `variant`; routing by variant lives inside each
+  // module's decodeId, so the shell only needs to find a module that accepts
+  // the prefix.
+  return DEFAULT_MODULE;
+}
+
+function makeStateApi() {
+  return {
+    get marks() { return state.marks; },
+    get xMarks() { return state.xMarks; },
+    get dragging() { return state.dragging; },
+    set dragging(value) { state.dragging = value; },
+    get touchPending() { return state.touchPending; },
+    set touchPending(value) { state.touchPending = value; },
+    pushHistory,
+    scheduleRender,
+    scheduleSave,
+    maybeReveal,
+    updateProgress,
+  };
+}
+
+function renderPuzzle() {
+  state.ui?.render();
+  updateUndoButton();
+}
+
+function stateIsSolved() {
+  return state.ui?.isSolved() ?? false;
 }
 
 function revealGamePanel() {
@@ -466,13 +420,7 @@ function openPuzzle(id, title = "") {
   loadFromId(id, { isSecret: true, title });
 }
 
-function puzzleLabel(payload) {
-  const preset = Object.values(PRESETS).find((p) => p.size === payload.size);
-  const base = preset?.label ?? `Custom ${payload.size}x${payload.size}`;
-  return payload.shapeStyle === "straight" ? `${base} Straight` : base;
-}
-
-function generatePuzzleId(presetId, shapeStyle, code) {
+function generatePuzzleId(puzzleType, presetId, shape, code) {
   const workerCount = Math.max(2, Math.min(navigator.hardwareConcurrency || 4, 6));
   return new Promise((resolve, reject) => {
     const workerUrl = new URL("./generator-worker.js", import.meta.url);
@@ -500,7 +448,7 @@ function generatePuzzleId(presetId, shapeStyle, code) {
       workers.push(worker);
       worker.addEventListener("message", (event) => {
         if (event.data?.ok) {
-          finishOk({ id: event.data.id, solution: event.data.solution, fillLengths: event.data.fillLengths });
+          finishOk(event.data);
         } else {
           lastError = new Error(event.data?.error ?? "Generation failed");
           pending -= 1;
@@ -512,12 +460,12 @@ function generatePuzzleId(presetId, shapeStyle, code) {
         pending -= 1;
         if (pending === 0) finishFail();
       });
-      worker.postMessage({ presetId, shapeStyle, code });
+      worker.postMessage({ puzzleType, presetId, shape, code });
     }
   });
 }
 
-async function generateFreshPuzzle(presetId, shapeStyle) {
+async function generateFreshPuzzle(presetId, shape) {
   if (state.generatingFresh) return;
   state.generatingFresh = true;
   const wasLabel = els.newPuzzle.textContent;
@@ -526,11 +474,10 @@ async function generateFreshPuzzle(presetId, shapeStyle) {
   els.hintText.hidden = true;
   els.hintText.textContent = "";
   try {
-    const { id, solution, fillLengths } = await generatePuzzleId(presetId, shapeStyle, randomFreshCode());
-    loadFromId(id, { isSecret: false });
-    if (state.puzzle?.id === id) {
-      state.puzzle.solution = solution;
-      state.puzzle.fillLengths = fillLengths;
+    const result = await generatePuzzleId(DEFAULT_MODULE.id, presetId, shape, randomFreshCode());
+    loadFromId(result.id, { isSecret: false });
+    if (state.puzzle?.id === result.id) {
+      DEFAULT_MODULE.applyCachedFromWorker?.(state.puzzle, result);
     }
   } catch (error) {
     revealGamePanel();
@@ -555,291 +502,9 @@ function setCreatorMessage(message, isError) {
   els.creatorMessage.classList.toggle("error", isError);
 }
 
-function renderPuzzle() {
-  const puzzle = state.puzzle;
-  if (!puzzle) return;
-
-  // Grid template CSS is set once at puzzle load — no need to redo per render.
-
-  // Precompute current row/col counts once. Both clueEl and updateProgress
-  // need them; the old per-clue rowCount/columnCount calls were O(size²)
-  // total per render, all redundant with each other.
-  const counts = currentCounts(puzzle);
-
-  els.colClues.replaceChildren(...puzzle.colClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.col[index], "col", index)));
-  els.rowClues.replaceChildren(...puzzle.rowClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.row[index], "row", index)));
-  els.rowCluesRight.replaceChildren(...puzzle.rowClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.row[index], "row", index)));
-
-  const thermoByCell = puzzle.thermoByCell;
-
-  const cells = Array.from({ length: puzzle.size * puzzle.size }, (_, index) => {
-    const button = document.createElement("button");
-    const meta = thermoByCell.get(index);
-    button.type = "button";
-    button.className = cellClass(index);
-    button.ariaLabel = `Row ${Math.floor(index / puzzle.size) + 1}, column ${(index % puzzle.size) + 1}`;
-    button.addEventListener("contextmenu", (event) => {
-      event.preventDefault();
-    });
-    button.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "touch") {
-        if (event.button !== 0) return;
-        if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
-          event.target.releasePointerCapture(event.pointerId);
-        }
-        cancelTouchPending();
-        const timer = window.setTimeout(() => {
-          if (!state.touchPending) return;
-          state.touchPending.fired = true;
-          setThermoXMark(state.touchPending.meta, xMarkMode(state.touchPending.meta));
-        }, LONG_PRESS_MS);
-        state.touchPending = { index, meta, startX: event.clientX, startY: event.clientY, timer, fired: false };
-        return;
-      }
-      if (event.button === 0) {
-        pushHistory();
-        const mode = markMode(meta);
-        state.dragging = { kind: "mark", mode };
-        setThermoMark(meta, mode);
-      } else if (event.button === 2) {
-        pushHistory();
-        const mode = xMarkMode(meta);
-        state.dragging = { kind: "xMark", mode };
-        setThermoXMark(meta, mode);
-      }
-    });
-    button.addEventListener("pointermove", (event) => {
-      if (event.pointerType !== "touch" || !state.touchPending) return;
-      const dx = event.clientX - state.touchPending.startX;
-      const dy = event.clientY - state.touchPending.startY;
-      if (dx * dx + dy * dy < TOUCH_MOVE_THRESHOLD_PX * TOUCH_MOVE_THRESHOLD_PX) return;
-      cancelTouchPending();
-    });
-    button.addEventListener("pointerup", (event) => {
-      if (event.pointerType !== "touch") return;
-      const pending = state.touchPending;
-      if (!pending || pending.fired) return;
-      cancelTouchPending();
-      if (pending.index !== index || !pending.meta) return;
-      const mode = markMode(pending.meta);
-      setThermoMark(pending.meta, mode);
-    });
-    button.addEventListener("pointerenter", (event) => {
-      if (!state.dragging) return;
-      if (state.dragging.kind === "mark" && (event.buttons & 1)) {
-        setThermoMark(meta, state.dragging.mode);
-      } else if (state.dragging.kind === "xMark" && (event.buttons & 2)) {
-        setThermoXMark(meta, state.dragging.mode);
-      }
-    });
-    renderThermoGlyph(button, index, meta);
-    return button;
-  });
-  els.board.replaceChildren(...cells);
-
-  updateProgress(counts);
-  updateUndoButton();
-}
-
-// One pass over `state.marks` to derive per-row and per-col fill counts.
-// Replaces the previous pattern of calling rowCount(row) / columnCount(col)
-// separately from each consumer (clueEl, updateProgress, isSolved), which
-// each iterated O(size) cells per call.
-function currentCounts(/** @type {any} */ puzzle) {
-  const size = puzzle.size;
-  const row = new Array(size).fill(0);
-  const col = new Array(size).fill(0);
-  for (const cell of state.marks) {
-    row[(cell / size) | 0] += 1;
-    col[cell % size] += 1;
-  }
-  return { row, col };
-}
-
-function markMode(meta) {
-  return state.marks.has(meta.thermo[meta.pathIndex]) ? "clear" : "fill";
-}
-
-function setThermoMark(meta, mode) {
-  if (!meta) return;
-  if (state.dragging === null) pushHistory();
-  const cell = meta.thermo[meta.pathIndex];
-  if (mode === "fill") {
-    if (state.settings.cascadeThermoFill) {
-      meta.thermo.slice(0, meta.pathIndex + 1).forEach((c) => {
-        state.marks.add(c);
-        state.xMarks.delete(c);
-      });
-    } else {
-      state.marks.add(cell);
-      state.xMarks.delete(cell);
-    }
-  } else {
-    if (state.settings.cascadeThermoFill) {
-      meta.thermo.slice(meta.pathIndex).forEach((c) => state.marks.delete(c));
-    } else {
-      state.marks.delete(cell);
-    }
-  }
-  scheduleSave();
-  scheduleRender();
-  maybeReveal();
-}
-
-function xMarkMode(meta) {
-  return state.xMarks.has(meta.thermo[meta.pathIndex]) ? "clear-x" : "x";
-}
-
-function setThermoXMark(meta, mode) {
-  if (!meta) return;
-  if (state.dragging === null) pushHistory();
-  const cell = meta.thermo[meta.pathIndex];
-  if (mode === "x") {
-    if (state.settings.cascadeThermoX) {
-      meta.thermo.slice(meta.pathIndex).forEach((/** @type {number} */ c) => {
-        state.xMarks.add(c);
-        state.marks.delete(c);
-      });
-    } else {
-      state.xMarks.add(cell);
-      state.marks.delete(cell);
-    }
-  } else {
-    if (state.settings.cascadeThermoX) {
-      meta.thermo.slice(0, meta.pathIndex + 1).forEach((/** @type {number} */ c) => state.xMarks.delete(c));
-    } else {
-      state.xMarks.delete(cell);
-    }
-  }
-  scheduleSave();
-  scheduleRender();
-  maybeReveal();
-}
-
-function cellClass(index) {
-  const classes = ["cell"];
-  if (state.marks.has(index)) classes.push("filled");
-  if (state.xMarks.has(index)) classes.push("x-marked");
-  return classes.join(" ");
-}
-
-function renderThermoGlyph(button, index, meta) {
-  if (!meta) return;
-  const directions = new Set();
-  [meta.thermo[meta.pathIndex - 1], meta.thermo[meta.pathIndex + 1]].forEach((cell) => {
-    if (cell === undefined) return;
-    const diff = cell - index;
-    if (diff === -1) directions.add("left");
-    if (diff === 1) directions.add("right");
-    if (diff === -state.puzzle.size) directions.add("up");
-    if (diff === state.puzzle.size) directions.add("down");
-  });
-
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("class", "thermo-svg");
-  svg.setAttribute("viewBox", "0 0 48 48");
-  svg.setAttribute("aria-hidden", "true");
-
-  const paths = pathsForDirections([...directions]);
-  paths.forEach(({ d, end }) => {
-    const endClass = end ? " tube-end" : "";
-    svg.append(svgPath(d, `tube-outer${endClass}`));
-    svg.append(svgPath(d, `tube-inner${endClass}`));
-  });
-
-  if (meta.pathIndex === 0) {
-    const bulbDirection = [...directions][0];
-    const neck = bulbNeckForDirection(bulbDirection);
-    if (neck) svg.append(svgPath(neck, "bulb-neck"));
-
-    const bulbFill = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    bulbFill.setAttribute("class", "bulb-fill");
-    bulbFill.setAttribute("cx", "24");
-    bulbFill.setAttribute("cy", "24");
-    bulbFill.setAttribute("r", "12");
-    const bulbOutline = svgPath(bulbOutlinePath(bulbDirection), "bulb-outline");
-    svg.append(bulbFill, bulbOutline);
-  }
-
-  button.append(svg);
-
-  if (state.xMarks.has(index)) {
-    const x = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    x.setAttribute("class", "x-mark");
-    x.setAttribute("viewBox", "0 0 24 24");
-    x.setAttribute("aria-hidden", "true");
-    x.append(svgPath("M6 6 L18 18", "x-mark-outline"));
-    x.append(svgPath("M18 6 L6 18", "x-mark-outline"));
-    x.append(svgPath("M6 6 L18 18", "x-mark-line"));
-    x.append(svgPath("M18 6 L6 18", "x-mark-line"));
-    button.append(x);
-
-    const xText = document.createElement("span");
-    xText.className = "x-mark-text";
-    xText.textContent = "X";
-    button.append(xText);
-  }
-}
-
-function svgPath(d, className) {
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("class", className);
-  path.setAttribute("d", d);
-  path.setAttribute("fill", "none");
-  return path;
-}
-
-function pathsForDirections(directions) {
-  const points = {
-    up: [24, -4],
-    right: [52, 24],
-    down: [24, 52],
-    left: [-4, 24],
-    center: [24, 24],
-  };
-
-  if (directions.length === 0) return [];
-  if (directions.length === 1) {
-    const point = points[directions[0]];
-    return [{ d: `M ${point[0]} ${point[1]} L 24 24`, end: true }];
-  }
-
-  const [first, second] = directions;
-  const a = points[first];
-  const b = points[second];
-  return [{ d: `M ${a[0]} ${a[1]} L 24 24 L ${b[0]} ${b[1]}`, end: false }];
-}
-
-function bulbNeckForDirection(direction) {
-  if (direction === "up") return "M 24 24 L 24 6";
-  if (direction === "right") return "M 24 24 L 42 24";
-  if (direction === "down") return "M 24 24 L 24 42";
-  if (direction === "left") return "M 24 24 L 6 24";
-  return "";
-}
-
-function bulbOutlinePath(direction) {
-  const center = { x: 24, y: 24 };
-  const radius = 14;
-  const gap = 72;
-  const directionAngles = { right: 0, down: 90, left: 180, up: 270 };
-  const middle = directionAngles[direction] ?? 0;
-  const start = polarPoint(center, radius, middle + gap / 2);
-  const end = polarPoint(center, radius, middle - gap / 2);
-  return `M ${start.x} ${start.y} A ${radius} ${radius} 0 1 1 ${end.x} ${end.y}`;
-}
-
-function polarPoint(center, radius, degrees) {
-  const radians = degrees * Math.PI / 180;
-  return {
-    x: Number((center.x + radius * Math.cos(radians)).toFixed(3)),
-    y: Number((center.y + radius * Math.sin(radians)).toFixed(3)),
-  };
-}
-
 function maybeReveal() {
   const puzzle = state.puzzle;
-  if (!puzzle || !isSolved()) return;
+  if (!puzzle || !stateIsSolved()) return;
   if (!puzzle.isSecret) {
     showWin("Solved!", "Nice work — generate another with “New puzzle” below.", null);
     return;
@@ -910,26 +575,10 @@ function sniffSecretHref(secret) {
   return null;
 }
 
-function isSolved() {
-  const puzzle = state.puzzle;
-  // Cheap precondition: total marks must equal the sum of all clues. If not,
-  // we can't possibly be solved — skip the per-row, per-col, per-thermo work.
-  if (state.marks.size !== puzzle.expectedTotal) return false;
-  const counts = currentCounts(puzzle);
-  for (let i = 0; i < puzzle.size; i += 1) {
-    if (counts.row[i] !== puzzle.rowClues[i]) return false;
-    if (counts.col[i] !== puzzle.colClues[i]) return false;
-  }
-  return puzzle.thermos.every((/** @type {number[]} */ thermo) => {
-    const marks = thermo.map((/** @type {number} */ cell) => state.marks.has(cell));
-    const firstGap = marks.indexOf(false);
-    return firstGap === -1 || marks.slice(firstGap + 1).every((mark) => !mark);
-  });
-}
-
 function updateProgress(/** @type {{row: number[], col: number[]} | undefined} */ precomputed) {
   const puzzle = state.puzzle;
-  const counts = precomputed ?? currentCounts(puzzle);
+  if (!puzzle) return;
+  const counts = precomputed ?? rowColCounts();
   const target = puzzle.expectedTotal;
   const filled = state.marks.size;
   let anyOver = false;
@@ -948,6 +597,17 @@ function updateProgress(/** @type {{row: number[], col: number[]} | undefined} *
   } else {
     els.progressText.textContent = target ? `${Math.round((filled / target) * 100)}%` : "0%";
   }
+}
+
+function rowColCounts() {
+  const size = state.puzzle.size;
+  const row = new Array(size).fill(0);
+  const col = new Array(size).fill(0);
+  for (const cell of state.marks) {
+    row[(cell / size) | 0] += 1;
+    col[cell % size] += 1;
+  }
+  return { row, col };
 }
 
 function progressKey() {
@@ -1004,61 +664,6 @@ function loadProgress() {
   } catch (error) {
     localStorage.removeItem(key);
   }
-}
-
-/**
- * @param {number} clue
- * @param {number} count
- * @param {"row" | "col"} axis
- * @param {number} index
- */
-function clueEl(clue, count, axis, index) {
-  const element = document.createElement("div");
-  const stateClass = count === clue ? (state.settings.dimMatchedClues ? "met" : "") : count > clue ? "over" : "";
-  element.className = `col-clue ${stateClass}`;
-  element.textContent = String(clue);
-  if (state.settings.autoXAxis && count === clue && clue > 0 && !axisFullyResolved(axis, index)) {
-    element.classList.add("clickable");
-    element.setAttribute("role", "button");
-    element.setAttribute("tabindex", "0");
-    element.setAttribute("aria-label", `Fill remaining ${axis === "row" ? `row ${index + 1}` : `column ${index + 1}`} cells with X`);
-    element.addEventListener("click", () => fillAxisWithX(axis, index));
-    element.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
-        fillAxisWithX(axis, index);
-      }
-    });
-  }
-  return element;
-}
-
-function fillAxisWithX(axis, index) {
-  const size = state.puzzle.size;
-  const targets = [];
-  for (let i = 0; i < size; i += 1) {
-    const cell = axis === "row" ? index * size + i : i * size + index;
-    if (!state.marks.has(cell) && !state.xMarks.has(cell)) targets.push(cell);
-  }
-  if (targets.length === 0) return;
-  pushHistory();
-  targets.forEach((cell) => state.xMarks.add(cell));
-  scheduleSave();
-  scheduleRender();
-  maybeReveal();
-}
-
-/**
- * @param {"row" | "col"} axis
- * @param {number} index
- */
-function axisFullyResolved(axis, index) {
-  const size = state.puzzle.size;
-  for (let i = 0; i < size; i += 1) {
-    const cell = axis === "row" ? index * size + i : i * size + index;
-    if (!state.marks.has(cell) && !state.xMarks.has(cell)) return false;
-  }
-  return true;
 }
 
 loadFromLocation();

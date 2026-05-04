@@ -1,14 +1,14 @@
 import { expect, test, describe } from "bun:test";
-import { constructPuzzle, inferSolveBC } from "./constructive.js";
+import { mulberry32 } from "../../common/util.js";
+import { constructPuzzle, inferSolveBC } from "./generator.js";
+import { PRESETS } from "./presets.js";
 import {
-  PRESETS,
   buildSolverContext,
   countSolutionsCtx,
-  mulberry32,
   countsByRow,
   countsByCol,
   solutionFromLengths,
-} from "./generator.js";
+} from "./solver.js";
 
 // Across multiple presets and shape styles, every puzzle the constructive
 // generator emits must be uniquely solvable. The backtracking solver is the

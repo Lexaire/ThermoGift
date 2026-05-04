@@ -6,16 +6,16 @@
 // bounds-consistency propagation. Each commit is the next "deduction" in the
 // chain; the resulting clue values are the puzzle's clues.
 //
-// See constructive-design.md for the high-level approach.
+// See ../../../src/constructive-design.md for the high-level approach.
 
+import { buildThermometers } from "./shapes.js";
 import {
-  buildThermometers,
-  solutionFromLengths,
-  countsByRow,
-  countsByCol,
   buildSolverContext,
   countSolutionsCtx,
-} from "./generator.js";
+  countsByRow,
+  countsByCol,
+  solutionFromLengths,
+} from "./solver.js";
 
 export function buildLineIndex(thermos, size) {
   const N = thermos.length;
@@ -300,8 +300,6 @@ export function constructForLayout(thermos, size, opts = {}) {
   const domain = initialDomains(thermos);
   const committed = new Int32Array(lines.length).fill(-1);
 
-  // Decision stack: each frame can replay alternative values for its line.
-  // Frame: { lineIdx, alternatives:[{value, score}], snapshotDomain, snapshotCommitted }
   const stack = [];
   let backtracks = 0;
 
@@ -317,7 +315,6 @@ export function constructForLayout(thermos, size, opts = {}) {
       backtracks += 1;
       if (backtracks > backtrackBudget) return false;
       const top = stack[stack.length - 1];
-      // Restore to before this decision.
       for (let i = 0; i < domain.length; i += 1) domain[i].set(top.snapshotDomain[i]);
       committed.set(top.snapshotCommitted);
       if (top.alternatives.length > 0) {
@@ -376,11 +373,6 @@ export function constructForLayout(thermos, size, opts = {}) {
     let result = findMoves(domain, lines, committed, sizes, size, { ...moveOpts, requireForcing: true, topK: 4 });
     if (result && result.contradiction) { if (!tryBacktrack()) return null; continue; }
     if (!result || result.moves.length === 0) {
-      // SAC fallback: BC stalled but SAC may prune globally infeasible values
-      // (notably swap-pair length-2 thermos that BC alone can't disambiguate).
-      // Length-2 first since those are usually the offenders and the pass is
-      // far cheaper. Stop on first prune and re-enter the main loop so
-      // propagation can cascade the new info before paying for another pass.
       if (useSac) {
         let sacCode = sacPass(domain, lines, committed, { length2Only: true });
         if (sacCode === 0) sacCode = sacPass(domain, lines, committed, { length2Only: false });
