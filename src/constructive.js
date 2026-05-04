@@ -168,6 +168,59 @@ function extractFills(domain) {
   return fills;
 }
 
+// Singleton arc consistency pass. For each (thermo t, value v) currently in
+// dom[t], pin t = v in a clone, propagate to fixpoint over committed lines;
+// if it contradicts, v is globally infeasible given the current commits and we
+// remove v from the real domain[t]. Strictly stronger than BC: this is what
+// breaks "swap pair" stalls where two length-2 thermos can swap fills under BC.
+//
+// Stops at the first prune within a pass (cheap exits beat full fixpoint here).
+// Returns 1 if any prune, -1 on contradiction (some real domain wiped out),
+// 0 if no prune found.
+function sacPass(domain, lines, committed, options = {}) {
+  const { length2Only = false } = options;
+  for (let t = 0; t < domain.length; t += 1) {
+    if (length2Only && domain[t].length !== 3) continue;
+    const dom = domain[t];
+    let count = 0;
+    for (let f = 0; f < dom.length; f += 1) if (dom[f]) count += 1;
+    if (count <= 1) continue;
+    for (let v = 0; v < dom.length; v += 1) {
+      if (!dom[v]) continue;
+      const clone = cloneDomain(domain);
+      const c = clone[t];
+      for (let f = 0; f < c.length; f += 1) c[f] = (f === v) ? 1 : 0;
+      const code = propagate(clone, lines, committed);
+      if (code < 0) {
+        domain[t][v] = 0;
+        let any = false;
+        for (let f = 0; f < domain[t].length; f += 1) if (domain[t][f]) { any = true; break; }
+        if (!any) return -1;
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
+// BC-only solve from initial domains given the full clue set. Returns
+// `{ solved, fills }`: `solved` is true iff BC alone reaches all singletons.
+// This is the no-guess contract — the player must be able to deduce the
+// solution by BC alone, even if the generator used SAC during construction.
+// Exported so tests can assert it on every produced puzzle.
+export function inferSolveBC(thermos, size, rowClues, colClues) {
+  const { lines } = buildLineIndex(thermos, size);
+  const committed = new Int32Array(lines.length);
+  for (let i = 0; i < size; i += 1) {
+    committed[i] = rowClues[i];
+    committed[size + i] = colClues[i];
+  }
+  const domain = initialDomains(thermos);
+  if (propagate(domain, lines, committed) < 0) return { solved: false, fills: null };
+  const fills = extractFills(domain);
+  return { solved: fills !== null, fills };
+}
+
 // For each (uncommitted line L, value w in current lineRange(L)), compute the
 // number of NEW singleton thermos that propagation would yield. Return the
 // top moves sorted by score (best first). Set `requireForcing` to false to
@@ -237,6 +290,7 @@ export function constructForLayout(thermos, size, opts = {}) {
     backtrackBudget = thermos.length * 4,
     preferLength2 = true,
     rng = Math.random,
+    useSac = true,
   } = opts;
   const idx = buildLineIndex(thermos, size);
   const { lines } = idx;
@@ -280,13 +334,12 @@ export function constructForLayout(thermos, size, opts = {}) {
       if (!tryBacktrack()) return null;
       continue;
     }
-    // Auto-commit lines with forced values (range collapsed to one value).
     const ac = autoCommitForced(domain, lines, committed, size);
     if (ac < 0) {
       if (!tryBacktrack()) return null;
       continue;
     }
-    if (ac > 0) continue; // re-propagate after auto-commits
+    if (ac > 0) continue;
 
     const sizes = domainSizes(domain);
     if (!sizes) {
@@ -301,26 +354,34 @@ export function constructForLayout(thermos, size, opts = {}) {
       const sol = solutionFromLengths(size, thermos, fills);
       const rowClues = countsByRow(sol, size);
       const colClues = countsByCol(sol, size);
-      // Belt-and-suspenders: in-progress checks should already have ruled out
-      // dead clues, but verify here too.
       const hasDead = rowClues.some((c) => c === 0 || c === size) ||
         colClues.some((c) => c === 0 || c === size);
       if (hasDead) { if (!tryBacktrack()) return null; continue; }
+      // No-guess contract: BC alone (no SAC) on the full clue set must reach
+      // the same singleton state. SAC during construction can prune values
+      // BC wouldn't have, so verify the player can still solve by BC alone.
+      const inferred = inferSolveBC(thermos, size, rowClues, colClues);
+      if (!inferred.solved) { if (!tryBacktrack()) return null; continue; }
       const cnt = countSolutionsCtx(ctx, rowClues, colClues, 2, 100_000);
       if (cnt === 1) return { thermos, fills, rowClues, colClues, solution: sol };
       if (!tryBacktrack()) return null;
       continue;
     }
 
-    // Find forcing (line, value) commitments. Each commit must yield at least
-    // one new singleton — that's the next deduction in the player's chain.
-    // Keep a few alternatives so we can backtrack out of paths that cascade
-    // into a forced 0/size clue. Fall back to non-forcing when no forcing move
-    // exists (dense small layouts often have no forcing move from the initial
-    // state because the only forcing values would be 0 or size).
     let result = findMoves(domain, lines, committed, sizes, size, { preferLength2, requireForcing: true, topK: 4 });
     if (result && result.contradiction) { if (!tryBacktrack()) return null; continue; }
     if (!result || result.moves.length === 0) {
+      // SAC fallback: BC stalled but SAC may prune globally infeasible values
+      // (notably swap-pair length-2 thermos that BC alone can't disambiguate).
+      // Length-2 first since those are usually the offenders and the pass is
+      // far cheaper. Stop on first prune and re-enter the main loop so
+      // propagation can cascade the new info before paying for another pass.
+      if (useSac) {
+        let sacCode = sacPass(domain, lines, committed, { length2Only: true });
+        if (sacCode === 0) sacCode = sacPass(domain, lines, committed, { length2Only: false });
+        if (sacCode < 0) { if (!tryBacktrack()) return null; continue; }
+        if (sacCode > 0) continue;
+      }
       result = findMoves(domain, lines, committed, sizes, size, { preferLength2, requireForcing: false, topK: 4 });
       if (!result || result.contradiction || result.moves.length === 0) {
         if (!tryBacktrack()) return null;
@@ -340,6 +401,7 @@ export function constructPuzzle(size, shapeStyle, opts = {}) {
     minThermos = Math.max(8, Math.floor(size * size / 5)),
     layoutAttempts = 30,
     rng = Math.random,
+    useSac = true,
   } = opts;
   const layoutConfig = { minLength };
   if (maxLength !== undefined) layoutConfig.maxLength = maxLength;
@@ -347,7 +409,7 @@ export function constructPuzzle(size, shapeStyle, opts = {}) {
     let thermos;
     try { thermos = buildThermometers(size, minThermos, rng, shapeStyle, layoutConfig); }
     catch { continue; }
-    const result = constructForLayout(thermos, size, { rng });
+    const result = constructForLayout(thermos, size, { rng, useSac });
     if (result) return result;
   }
   return null;

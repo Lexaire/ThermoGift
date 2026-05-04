@@ -1,5 +1,5 @@
 import { expect, test, describe } from "bun:test";
-import { constructPuzzle } from "./constructive.js";
+import { constructPuzzle, inferSolveBC } from "./constructive.js";
 import {
   PRESETS,
   buildSolverContext,
@@ -29,6 +29,12 @@ function generateAndCheck(presetId, shapeStyle, count, seed) {
     const ctx = buildSolverContext(r.thermos, preset.size);
     const cnt = countSolutionsCtx(ctx, r.rowClues, r.colClues, 2, Infinity);
     expect(cnt, `${presetId}/${shapeStyle} attempt ${i}`).toBe(1);
+
+    // No-guess contract: BC alone on the full clue set must reach all
+    // singletons. Construction may use SAC to prune; the player can't, so
+    // CI must verify every produced puzzle is BC-solvable end-to-end.
+    const inferred = inferSolveBC(r.thermos, preset.size, r.rowClues, r.colClues);
+    expect(inferred.solved, `${presetId}/${shapeStyle} attempt ${i} no-guess`).toBe(true);
 
     const sol = solutionFromLengths(preset.size, r.thermos, r.fills);
     expect(countsByRow(sol, preset.size)).toEqual(r.rowClues);

@@ -12,8 +12,9 @@ import {
 } from "./generator.js";
 
 /** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
+/** @typedef {{ kind: "mark" | "xMark", mode: string }} DragState */
 
-/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: string | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean, settings: { autoXAxis: boolean, cascadeThermoX: boolean } }} */
+/** @type {{ puzzle: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: DragState | null, touchPending: { index: number, meta: any, startX: number, startY: number, timer: number, fired: boolean } | null, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean, settings: { autoXAxis: boolean, cascadeThermoX: boolean, cascadeThermoFill: boolean, dimMatchedClues: boolean } }} */
 const state = {
   puzzle: null,
   marks: new Set(),
@@ -27,6 +28,8 @@ const state = {
   settings: {
     autoXAxis: false,
     cascadeThermoX: false,
+    cascadeThermoFill: false,
+    dimMatchedClues: false,
   },
 };
 
@@ -35,6 +38,8 @@ const HISTORY_LIMIT = 50;
 const SETTINGS_KEYS = /** @type {const} */ ({
   autoXAxis: "thermogift:assist:autoXAxis",
   cascadeThermoX: "thermogift:assist:cascadeThermoX",
+  cascadeThermoFill: "thermogift:assist:cascadeThermoFill",
+  dimMatchedClues: "thermogift:assist:dimMatchedClues",
 });
 
 const LONG_PRESS_MS = 350;
@@ -75,6 +80,8 @@ const els = {
   settingsDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#settingsDialog")),
   settingAutoXAxis: /** @type {HTMLInputElement} */ (document.querySelector("#settingAutoXAxis")),
   settingCascadeThermoX: /** @type {HTMLInputElement} */ (document.querySelector("#settingCascadeThermoX")),
+  settingCascadeThermoFill: /** @type {HTMLInputElement} */ (document.querySelector("#settingCascadeThermoFill")),
+  settingDimMatchedClues: /** @type {HTMLInputElement} */ (document.querySelector("#settingDimMatchedClues")),
 };
 
 /** @type {readonly ("auto" | "light" | "dark")[]} */
@@ -108,8 +115,12 @@ els.themeToggle.addEventListener("click", () => {
 function loadSettings() {
   state.settings.autoXAxis = localStorage.getItem(SETTINGS_KEYS.autoXAxis) === "true";
   state.settings.cascadeThermoX = localStorage.getItem(SETTINGS_KEYS.cascadeThermoX) === "true";
+  state.settings.cascadeThermoFill = localStorage.getItem(SETTINGS_KEYS.cascadeThermoFill) === "true";
+  state.settings.dimMatchedClues = localStorage.getItem(SETTINGS_KEYS.dimMatchedClues) === "true";
   els.settingAutoXAxis.checked = state.settings.autoXAxis;
   els.settingCascadeThermoX.checked = state.settings.cascadeThermoX;
+  els.settingCascadeThermoFill.checked = state.settings.cascadeThermoFill;
+  els.settingDimMatchedClues.checked = state.settings.dimMatchedClues;
 }
 
 loadSettings();
@@ -127,6 +138,17 @@ els.settingAutoXAxis.addEventListener("change", () => {
 els.settingCascadeThermoX.addEventListener("change", () => {
   state.settings.cascadeThermoX = els.settingCascadeThermoX.checked;
   localStorage.setItem(SETTINGS_KEYS.cascadeThermoX, String(state.settings.cascadeThermoX));
+});
+
+els.settingCascadeThermoFill.addEventListener("change", () => {
+  state.settings.cascadeThermoFill = els.settingCascadeThermoFill.checked;
+  localStorage.setItem(SETTINGS_KEYS.cascadeThermoFill, String(state.settings.cascadeThermoFill));
+});
+
+els.settingDimMatchedClues.addEventListener("change", () => {
+  state.settings.dimMatchedClues = els.settingDimMatchedClues.checked;
+  localStorage.setItem(SETTINGS_KEYS.dimMatchedClues, String(state.settings.dimMatchedClues));
+  if (state.puzzle) renderPuzzle();
 });
 
 const savedNewDifficulty = localStorage.getItem("thermogift:newDifficulty");
@@ -539,12 +561,10 @@ function renderPuzzle() {
     button.ariaLabel = `Row ${Math.floor(index / puzzle.size) + 1}, column ${(index % puzzle.size) + 1}`;
     button.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      if (state.touchPending || event.pointerType === "touch") return;
-      setThermoXMark(meta, xMarkMode(meta));
     });
     button.addEventListener("pointerdown", (event) => {
-      if (event.button !== 0) return;
       if (event.pointerType === "touch") {
+        if (event.button !== 0) return;
         if (event.target instanceof Element && event.target.hasPointerCapture(event.pointerId)) {
           event.target.releasePointerCapture(event.pointerId);
         }
@@ -557,9 +577,17 @@ function renderPuzzle() {
         state.touchPending = { index, meta, startX: event.clientX, startY: event.clientY, timer, fired: false };
         return;
       }
-      pushHistory();
-      state.dragging = markMode(meta);
-      setThermoMark(meta, state.dragging);
+      if (event.button === 0) {
+        pushHistory();
+        const mode = markMode(meta);
+        state.dragging = { kind: "mark", mode };
+        setThermoMark(meta, mode);
+      } else if (event.button === 2) {
+        pushHistory();
+        const mode = xMarkMode(meta);
+        state.dragging = { kind: "xMark", mode };
+        setThermoXMark(meta, mode);
+      }
     });
     button.addEventListener("pointermove", (event) => {
       if (event.pointerType !== "touch" || !state.touchPending) return;
@@ -578,7 +606,12 @@ function renderPuzzle() {
       setThermoMark(pending.meta, mode);
     });
     button.addEventListener("pointerenter", (event) => {
-      if (event.buttons === 1 && state.dragging !== null) setThermoMark(meta, state.dragging);
+      if (!state.dragging) return;
+      if (state.dragging.kind === "mark" && (event.buttons & 1)) {
+        setThermoMark(meta, state.dragging.mode);
+      } else if (state.dragging.kind === "xMark" && (event.buttons & 2)) {
+        setThermoXMark(meta, state.dragging.mode);
+      }
     });
     renderThermoGlyph(button, index, meta);
     return button;
@@ -596,13 +629,23 @@ function markMode(meta) {
 function setThermoMark(meta, mode) {
   if (!meta) return;
   if (state.dragging === null) pushHistory();
+  const cell = meta.thermo[meta.pathIndex];
   if (mode === "fill") {
-    meta.thermo.slice(0, meta.pathIndex + 1).forEach((cell) => {
+    if (state.settings.cascadeThermoFill) {
+      meta.thermo.slice(0, meta.pathIndex + 1).forEach((c) => {
+        state.marks.add(c);
+        state.xMarks.delete(c);
+      });
+    } else {
       state.marks.add(cell);
       state.xMarks.delete(cell);
-    });
+    }
   } else {
-    meta.thermo.slice(meta.pathIndex).forEach((cell) => state.marks.delete(cell));
+    if (state.settings.cascadeThermoFill) {
+      meta.thermo.slice(meta.pathIndex).forEach((c) => state.marks.delete(c));
+    } else {
+      state.marks.delete(cell);
+    }
   }
   saveProgress();
   renderPuzzle();
@@ -615,7 +658,7 @@ function xMarkMode(meta) {
 
 function setThermoXMark(meta, mode) {
   if (!meta) return;
-  pushHistory();
+  if (state.dragging === null) pushHistory();
   const cell = meta.thermo[meta.pathIndex];
   if (mode === "x") {
     if (state.settings.cascadeThermoX) {
@@ -909,7 +952,7 @@ function loadProgress() {
  */
 function clueEl(clue, count, axis, index) {
   const element = document.createElement("div");
-  const stateClass = count === clue ? "met" : count > clue ? "over" : "";
+  const stateClass = count === clue ? (state.settings.dimMatchedClues ? "met" : "") : count > clue ? "over" : "";
   element.className = `col-clue ${stateClass}`;
   element.textContent = String(clue);
   if (state.settings.autoXAxis && count === clue && clue > 0 && !axisFullyResolved(axis, index)) {
