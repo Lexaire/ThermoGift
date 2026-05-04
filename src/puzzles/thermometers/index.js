@@ -117,6 +117,17 @@ const thermometers = {
   presets: PRESETS,
   shapeStyles: SHAPE_STYLES,
   availableShapesFor,
+  secondaryAxis: {
+    paramName: "shape",
+    label: "Thermometers",
+    storageKey: "thermogift:newShapeStyle",
+    defaultValue: "curved",
+    options: [
+      { value: "curved", label: "Curved" },
+      { value: "straight", label: "Straight only" },
+    ],
+    availableForPreset: availableShapesFor,
+  },
   decodeId,
   encode: encodeT2,
   generate,

@@ -134,25 +134,39 @@ function populateControlsForModule() {
     els.newSize.value = savedSize;
   }
 
-  const shapes = mod.shapeStyles ?? [];
-  els.newShapeStyle.innerHTML = "";
-  for (const shape of shapes) {
-    const opt = document.createElement("option");
-    opt.value = shape;
-    opt.textContent = shape === "curved" ? "Curved" : shape === "straight" ? "Straight only" : shape;
-    els.newShapeStyle.append(opt);
-  }
-  if (shapes.length <= 1 && els.shapeLabel) {
-    els.shapeLabel.hidden = true;
-  } else if (els.shapeLabel) {
-    els.shapeLabel.hidden = false;
-  }
-  const savedShape = localStorage.getItem("thermogift:newShapeStyle");
-  if (savedShape && [...els.newShapeStyle.options].some((o) => o.value === savedShape)) {
-    els.newShapeStyle.value = savedShape;
-  }
+  refreshSecondaryAxis();
 
   populateSettings(mod);
+}
+
+function refreshSecondaryAxis() {
+  const axis = activeModule().secondaryAxis;
+  const presetId = els.newSize.value;
+  const allowed = axis ? axis.availableForPreset(presetId) : [];
+  const visibleOptions = axis ? axis.options.filter((o) => allowed.includes(o.value)) : [];
+
+  els.newShapeStyle.innerHTML = "";
+  if (axis) {
+    for (const opt of visibleOptions) {
+      const el = document.createElement("option");
+      el.value = opt.value;
+      el.textContent = opt.label;
+      els.newShapeStyle.append(el);
+    }
+  }
+  if (els.shapeLabel) {
+    const labelText = els.shapeLabel.firstChild;
+    if (labelText && axis) labelText.textContent = `${axis.label} `;
+    els.shapeLabel.hidden = !axis || visibleOptions.length <= 1;
+  }
+  if (axis) {
+    const saved = localStorage.getItem(axis.storageKey);
+    if (saved && visibleOptions.some((o) => o.value === saved)) {
+      els.newShapeStyle.value = saved;
+    } else if (visibleOptions.some((o) => o.value === axis.defaultValue)) {
+      els.newShapeStyle.value = axis.defaultValue;
+    }
+  }
 }
 
 function populateSettings(mod) {
@@ -218,9 +232,15 @@ els.newPuzzleType?.addEventListener("change", () => {
   populateControlsForModule();
 });
 
-els.newSize.addEventListener("change", () => localStorage.setItem("thermogift:newSize", els.newSize.value));
+els.newSize.addEventListener("change", () => {
+  localStorage.setItem("thermogift:newSize", els.newSize.value);
+  // Re-populate the secondary axis: for thermometers the available shapes
+  // depend on size (straight is disabled at 20×20+).
+  refreshSecondaryAxis();
+});
 els.newShapeStyle.addEventListener("change", () => {
-  localStorage.setItem("thermogift:newShapeStyle", els.newShapeStyle.value);
+  const axis = activeModule().secondaryAxis;
+  if (axis) localStorage.setItem(axis.storageKey, els.newShapeStyle.value);
 });
 
 els.newPuzzle.addEventListener("click", () => {
@@ -517,7 +537,7 @@ function openPuzzle(id, title = "") {
   loadFromId(id, { isSecret: true, title });
 }
 
-function generatePuzzleId(puzzleType, presetId, shape, code) {
+function generatePuzzleId(message) {
   const workerCount = Math.max(2, Math.min(navigator.hardwareConcurrency || 4, 6));
   return new Promise((resolve, reject) => {
     const workerUrl = new URL("./generator-worker.js", import.meta.url);
@@ -557,12 +577,12 @@ function generatePuzzleId(puzzleType, presetId, shape, code) {
         pending -= 1;
         if (pending === 0) finishFail();
       });
-      worker.postMessage({ puzzleType, presetId, shape, code });
+      worker.postMessage(message);
     }
   });
 }
 
-async function generateFreshPuzzle(presetId, shape) {
+async function generateFreshPuzzle(presetId, secondaryValue) {
   if (state.generatingFresh) return;
   state.generatingFresh = true;
   const wasLabel = els.newPuzzle.textContent;
@@ -581,7 +601,11 @@ async function generateFreshPuzzle(presetId, shape) {
 
   try {
     const mod = activeModule();
-    const result = await generatePuzzleId(mod.id, presetId, shape, randomFreshCode());
+    const message = { puzzleType: mod.id, presetId, code: randomFreshCode() };
+    if (mod.secondaryAxis) {
+      message[mod.secondaryAxis.paramName] = secondaryValue;
+    }
+    const result = await generatePuzzleId(message);
     localStorage.removeItem("thermogift:lastPlayed");
     loadFromId(result.id, { isSecret: false });
     if (state.puzzle?.id === result.id) {

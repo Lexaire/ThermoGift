@@ -20,7 +20,8 @@ const MAX_CIPHER_BYTES = 4096;
 export function registerWorker(modules) {
   self.addEventListener("message", (event) => {
     try {
-      const { puzzleType, presetId, shape, code } = event.data ?? {};
+      const data = event.data ?? {};
+      const { puzzleType, code } = data;
       const module = modules[puzzleType];
       if (!module) throw new Error(`Unknown puzzle type: ${puzzleType}`);
       if (typeof code !== "string") throw new Error("Bad code");
@@ -28,7 +29,7 @@ export function registerWorker(modules) {
       if (secretBytes.length > MAX_CIPHER_BYTES) throw new Error(`Code too long (max ${MAX_CIPHER_BYTES} UTF-8 bytes)`);
 
       const deadlineMs = Date.now() + DEFAULT_DEADLINE_MS;
-      const puzzle = module.generate({ presetId, shape, deadlineMs, code });
+      const puzzle = module.generate({ ...data, deadlineMs });
       const solution = module.solutionCells(puzzle);
       const key = solutionKeyBytes(solution, puzzle.size, secretBytes.length);
       const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);

@@ -262,16 +262,21 @@ export function countTentSolutions(trees, rowClues, colClues, size, limit, maxNo
   return solutions;
 }
 
-export function isBCDeducible(trees, tents, rowClues, colClues, size) {
-  const UNKNOWN = 0;
-  const TENT = 1;
-  const EMPTY = 2;
+function are8Adjacent(a, b, size) {
+  const ar = (a / size) | 0;
+  const ac = a - ar * size;
+  const br = (b / size) | 0;
+  const bc = b - br * size;
+  return Math.abs(ar - br) <= 1 && Math.abs(ac - bc) <= 1 && a !== b;
+}
+
+const UNKNOWN = 0;
+const TENT = 1;
+const EMPTY = 2;
+
+function buildInitialDomain(trees, size) {
   const domain = new Uint8Array(size * size);
-
-  for (const tree of trees) {
-    domain[tree] = EMPTY;
-  }
-
+  for (const tree of trees) domain[tree] = EMPTY;
   for (let cell = 0; cell < size * size; cell++) {
     if (domain[cell] !== UNKNOWN) continue;
     const adj = orthogonalNeighbors(cell, size);
@@ -281,14 +286,23 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size) {
     }
     if (!hasTree) domain[cell] = EMPTY;
   }
+  return domain;
+}
 
-  const treeList = [...trees];
-  const treeAdj = treeList.map(tree => orthogonalNeighbors(tree, size).filter(c => !trees.has(c)));
-
+// Run all "easy" propagation rules to fixed point on `domain`.
+// Returns true if the propagation reached a consistent fixed point;
+// false if it detected a contradiction (or didn't converge).
+//
+// The contradiction-detecting tree-pair rule (two trees both reduced to
+// {X, Y} with X, Y 8-adjacent → no matching exists) is included here
+// unconditionally. On a uniquely-solvable puzzle this rule never fires
+// at the puzzle's true state, but it does fire on hypothetical states
+// during 1-step lookahead, which is what makes the lookahead useful.
+function easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size) {
   let iterations = 0;
   const maxIterations = 200;
-
   let changed = true;
+
   while (changed && iterations < maxIterations) {
     changed = false;
     iterations++;
@@ -364,10 +378,6 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size) {
       if (!hasTree) return false;
     }
 
-    // Two trees both forced to the same single tent cell → contradiction.
-    // This is reasoning a careful player will naturally do: "tree A's only
-    // candidate is X, and tree B's only candidate is X, so this can't be
-    // solved." Kept.
     for (let ti = 0; ti < treeList.length; ti++) {
       const a = treeCands[ti];
       if (a.length !== 1) continue;
@@ -377,15 +387,61 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size) {
       }
     }
 
-    // (Removed: the "two trees with the same {X, Y} candidate set where X
-    // and Y are 8-adjacent → contradiction" rule. It's correct, but it
-    // requires the player to track both trees' candidate sets simultaneously
-    // and notice an 8-adjacency relationship — too obscure for casual no-guess
-    // feel. Puzzles whose deducibility required this rule will now be rejected
-    // at generation, pushing the generator toward simpler deduction chains.)
+    for (let ti = 0; ti < treeList.length; ti++) {
+      const a = treeCands[ti];
+      if (a.length !== 2) continue;
+      for (let tj = ti + 1; tj < treeList.length; tj++) {
+        const b = treeCands[tj];
+        if (b.length !== 2) continue;
+        const samePair = (a[0] === b[0] && a[1] === b[1]) || (a[0] === b[1] && a[1] === b[0]);
+        if (samePair && are8Adjacent(a[0], a[1], size)) return false;
+      }
+    }
   }
 
-  if (iterations >= maxIterations) return false;
+  return iterations < maxIterations;
+}
+
+export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty = "easy") {
+  const domain = buildInitialDomain(trees, size);
+  const treeList = [...trees];
+  const treeAdj = treeList.map(tree => orthogonalNeighbors(tree, size).filter(c => !trees.has(c)));
+
+  if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+
+  if (difficulty === "hard") {
+    // 1-step lookahead (trial elimination): for each UNKNOWN cell, hypothesize
+    // TENT and EMPTY and run easy propagation. If a hypothesis leads to a
+    // contradiction (including via the tree-pair contradiction rule above),
+    // commit the opposite value. Loop until no progress.
+    const N = size * size;
+    let progress = true;
+    while (progress) {
+      progress = false;
+      for (let cell = 0; cell < N; cell++) {
+        if (domain[cell] !== UNKNOWN) continue;
+
+        const tryT = new Uint8Array(domain);
+        tryT[cell] = TENT;
+        const tentOk = easyPropagate(tryT, trees, treeList, treeAdj, rowClues, colClues, size);
+        if (!tentOk) {
+          domain[cell] = EMPTY;
+          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+          progress = true;
+          continue;
+        }
+
+        const tryE = new Uint8Array(domain);
+        tryE[cell] = EMPTY;
+        const emptyOk = easyPropagate(tryE, trees, treeList, treeAdj, rowClues, colClues, size);
+        if (!emptyOk) {
+          domain[cell] = TENT;
+          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+          progress = true;
+        }
+      }
+    }
+  }
 
   for (let cell = 0; cell < size * size; cell++) {
     if (trees.has(cell)) continue;

@@ -25,9 +25,9 @@ function hydrate(payload, id) {
   return { ...payload, id, expectedTotal };
 }
 
-function generate({ presetId, shape, deadlineMs }) {
+function generate({ presetId, difficulty, deadlineMs }) {
   const preset = PRESETS[presetId] ?? PRESETS["6x6"];
-  const result = constructTentsPuzzle(preset, { deadlineMs });
+  const result = constructTentsPuzzle(preset, { deadlineMs, difficulty });
   if (!result) throw new Error("Could not create a unique puzzle");
   const solution = Array.from({ length: result.size * result.size }, (_, i) => result.tents.has(i));
   return {
@@ -76,6 +76,17 @@ const tents = {
   presets: PRESETS,
   shapeStyles: SHAPE_STYLES,
   availableShapesFor,
+  secondaryAxis: {
+    paramName: "difficulty",
+    label: "Difficulty",
+    storageKey: "thermogift:newTentsDifficulty",
+    defaultValue: "easy",
+    options: [
+      { value: "easy", label: "Easy" },
+      { value: "hard", label: "Hard" },
+    ],
+    availableForPreset: () => ["easy", "hard"],
+  },
   decodeId,
   encode: encodeT2,
   generate,

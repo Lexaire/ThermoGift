@@ -11,27 +11,34 @@ import {
 import { encodeT2, t2Variant } from "./encoder.js";
 import { decodeT2Envelope } from "../../common/t2-envelope.js";
 
-function generateAndCheck(presetId, count, seed) {
+function generateAndCheck(presetId, count, seed, difficulty = "easy") {
   const preset = PRESETS[presetId];
   const rng = mulberry32(seed);
   for (let i = 0; i < count; i += 1) {
-    const puzzle = constructTentsPuzzle(preset, { rng });
-    expect(puzzle, `${presetId} attempt ${i}`).not.toBeNull();
+    const puzzle = constructTentsPuzzle(preset, { rng, difficulty });
+    expect(puzzle, `${presetId} ${difficulty} attempt ${i}`).not.toBeNull();
 
     expect(
       rulesSatisfied(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size),
-      `${presetId} attempt ${i} rules`
+      `${presetId} ${difficulty} attempt ${i} rules`
     ).toBe(true);
 
     expect(
       countTentSolutions(puzzle.trees, puzzle.rowClues, puzzle.colClues, puzzle.size, 2),
-      `${presetId} attempt ${i} unique`
+      `${presetId} ${difficulty} attempt ${i} unique`
     ).toBe(1);
 
     expect(
-      isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size),
-      `${presetId} attempt ${i} no-guess`
+      isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size, difficulty),
+      `${presetId} ${difficulty} attempt ${i} deducible at tier`
     ).toBe(true);
+
+    if (difficulty === "hard") {
+      expect(
+        isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size, "easy"),
+        `${presetId} hard attempt ${i} not solvable at easy tier`
+      ).toBe(false);
+    }
   }
 }
 
@@ -41,6 +48,14 @@ describe("tents generator produces uniquely solvable puzzles", () => {
   test("8x8", () => generateAndCheck("8x8", 3, 0xDEADBEEF));
   test("10x10", () => generateAndCheck("10x10", 3, 0xFEEDFACE));
   test("15x15", () => generateAndCheck("15x15", 2, 0xBADCAFE));
+});
+
+describe("tents generator produces hard-tier puzzles", () => {
+  test("5x5 hard", () => generateAndCheck("5x5", 3, 0x5A5A5A, "hard"));
+  test("6x6 hard", () => generateAndCheck("6x6", 3, 0x6B6B6B, "hard"));
+  test("8x8 hard", () => generateAndCheck("8x8", 2, 0x80808E, "hard"));
+  test("10x10 hard", () => generateAndCheck("10x10", 2, 0xA0A0A0, "hard"));
+  test("15x15 hard", () => generateAndCheck("15x15", 1, 0xF0F0F0, "hard"));
 });
 
 test("encode + decode round-trips", () => {

@@ -21,8 +21,13 @@ export function constructTentsPuzzle(presetOrId, opts = {}) {
   const deadlineMs = opts.deadlineMs ?? (Date.now() + preset.deadlineMs);
   const size = preset.size;
   const numTrees = Math.round(size * size * preset.treeDensity);
+  const difficulty = opts.difficulty ?? "easy";
+  // Hard tier requires the puzzle to fail easy-tier deduction, which is a
+  // narrow filter: random layouts pass it ~1% as often as easy. Give the
+  // attempt loop a much larger budget; the deadline still caps wall time.
+  const layoutAttempts = preset.layoutAttempts * (difficulty === "hard" ? 50 : 1);
 
-  for (let attempt = 0; attempt < preset.layoutAttempts; attempt++) {
+  for (let attempt = 0; attempt < layoutAttempts; attempt++) {
     if (Date.now() > deadlineMs) throw new Error("Generation took too long, try again");
 
     const trees = placeTreesRandomly(size, numTrees, rng);
@@ -34,7 +39,12 @@ export function constructTentsPuzzle(presetOrId, opts = {}) {
 
     if (countTentSolutions(trees, rowClues, colClues, size, 2) !== 1) continue;
 
-    if (!isBCDeducible(trees, tents, rowClues, colClues, size)) continue;
+    if (!isBCDeducible(trees, tents, rowClues, colClues, size, difficulty)) continue;
+
+    // Hard tier must be meaningfully harder than easy: if a puzzle is
+    // already deducible at the easy tier, it doesn't qualify as hard.
+    if (difficulty === "hard"
+        && isBCDeducible(trees, tents, rowClues, colClues, size, "easy")) continue;
 
     return { size, trees, tents, rowClues, colClues };
   }
