@@ -226,6 +226,9 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
           errors.add(n);
         }
       }
+      if (!orthoNeighbors(tent, puzzle.size).some(n => puzzle.trees.has(n))) {
+        errors.add(tent);
+      }
     }
     return errors;
   }

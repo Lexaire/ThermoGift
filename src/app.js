@@ -423,6 +423,11 @@ function loadFromId(id, opts = { isSecret: true }) {
     const puzzle = module.decodeId(id);
     const title = opts.title ?? "";
     state.module = module;
+    const key = Object.keys(MODULES).find((k) => MODULES[k] === module);
+    if (key && els.newPuzzleType.value !== key) {
+      els.newPuzzleType.value = key;
+      populateControlsForModule();
+    }
     state.puzzle = { ...puzzle, title, isSecret: opts.isSecret !== false };
 
     // Grid template CSS only depends on size — set it once per puzzle load.
