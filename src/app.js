@@ -28,8 +28,8 @@ const state = {
   settings: {
     autoXAxis: false,
     cascadeThermoX: false,
-    cascadeThermoFill: false,
-    dimMatchedClues: false,
+    cascadeThermoFill: true,
+    dimMatchedClues: true,
   },
 };
 
@@ -115,8 +115,8 @@ els.themeToggle.addEventListener("click", () => {
 function loadSettings() {
   state.settings.autoXAxis = localStorage.getItem(SETTINGS_KEYS.autoXAxis) === "true";
   state.settings.cascadeThermoX = localStorage.getItem(SETTINGS_KEYS.cascadeThermoX) === "true";
-  state.settings.cascadeThermoFill = localStorage.getItem(SETTINGS_KEYS.cascadeThermoFill) === "true";
-  state.settings.dimMatchedClues = localStorage.getItem(SETTINGS_KEYS.dimMatchedClues) === "true";
+  state.settings.cascadeThermoFill = localStorage.getItem(SETTINGS_KEYS.cascadeThermoFill) !== "false";
+  state.settings.dimMatchedClues = localStorage.getItem(SETTINGS_KEYS.dimMatchedClues) !== "false";
   els.settingAutoXAxis.checked = state.settings.autoXAxis;
   els.settingCascadeThermoX.checked = state.settings.cascadeThermoX;
   els.settingCascadeThermoFill.checked = state.settings.cascadeThermoFill;
