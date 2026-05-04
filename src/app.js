@@ -46,33 +46,33 @@ const LONG_PRESS_MS = 350;
 const TOUCH_MOVE_THRESHOLD_PX = 10;
 
 const els = {
-  creatorPanel: document.querySelector("#creatorPanel"),
-  gamePanel: document.querySelector("#gamePanel"),
-  rulesPanel: document.querySelector("#rulesPanel"),
-  createMode: document.querySelector("#createMode"),
-  creator: document.querySelector("#creator"),
-  creatorMessage: document.querySelector("#creatorMessage"),
+  creatorPanel: /** @type {HTMLElement} */ (document.querySelector("#creatorPanel")),
+  gamePanel: /** @type {HTMLElement} */ (document.querySelector("#gamePanel")),
+  rulesPanel: /** @type {HTMLElement} */ (document.querySelector("#rulesPanel")),
+  createMode: /** @type {HTMLButtonElement} */ (document.querySelector("#createMode")),
+  creator: /** @type {HTMLFormElement} */ (document.querySelector("#creator")),
+  creatorMessage: /** @type {HTMLElement} */ (document.querySelector("#creatorMessage")),
   giftCode: /** @type {HTMLInputElement} */ (document.querySelector("#giftCode")),
   giftTitle: /** @type {HTMLInputElement} */ (document.querySelector("#giftTitle")),
-  linkPanel: document.querySelector("#linkPanel"),
-  shareLink: document.querySelector("#shareLink"),
-  copyLink: document.querySelector("#copyLink"),
-  openPuzzle: document.querySelector("#openPuzzle"),
-  puzzleName: document.querySelector("#puzzleName"),
-  progressText: document.querySelector("#progressText"),
-  colClues: document.querySelector("#colClues"),
-  rowClues: document.querySelector("#rowClues"),
+  linkPanel: /** @type {HTMLElement} */ (document.querySelector("#linkPanel")),
+  shareLink: /** @type {HTMLInputElement} */ (document.querySelector("#shareLink")),
+  copyLink: /** @type {HTMLButtonElement} */ (document.querySelector("#copyLink")),
+  openPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#openPuzzle")),
+  puzzleName: /** @type {HTMLElement} */ (document.querySelector("#puzzleName")),
+  progressText: /** @type {HTMLElement} */ (document.querySelector("#progressText")),
+  colClues: /** @type {HTMLElement} */ (document.querySelector("#colClues")),
+  rowClues: /** @type {HTMLElement} */ (document.querySelector("#rowClues")),
   rowCluesRight: /** @type {HTMLElement} */ (document.querySelector("#rowCluesRight")),
-  board: document.querySelector("#board"),
-  hintText: document.querySelector("#hintText"),
+  board: /** @type {HTMLElement} */ (document.querySelector("#board")),
+  hintText: /** @type {HTMLElement} */ (document.querySelector("#hintText")),
   undoMove: /** @type {HTMLButtonElement} */ (document.querySelector("#undoMove")),
   resetPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#resetPuzzle")),
-  newDifficulty: document.querySelector("#newDifficulty"),
-  newShapeStyle: document.querySelector("#newShapeStyle"),
+  newDifficulty: /** @type {HTMLSelectElement} */ (document.querySelector("#newDifficulty")),
+  newShapeStyle: /** @type {HTMLSelectElement} */ (document.querySelector("#newShapeStyle")),
   newPuzzle: /** @type {HTMLButtonElement} */ (document.querySelector("#newPuzzle")),
-  winDialog: document.querySelector("#winDialog"),
-  winTitle: document.querySelector("#winTitle"),
-  winMessage: document.querySelector("#winMessage"),
+  winDialog: /** @type {HTMLDialogElement} */ (document.querySelector("#winDialog")),
+  winTitle: /** @type {HTMLElement} */ (document.querySelector("#winTitle")),
+  winMessage: /** @type {HTMLElement} */ (document.querySelector("#winMessage")),
   giftLink: /** @type {HTMLAnchorElement} */ (document.querySelector("#giftLink")),
   giftSecret: /** @type {HTMLElement} */ (document.querySelector("#giftSecret")),
   themeToggle: /** @type {HTMLButtonElement} */ (document.querySelector("#themeToggle")),
@@ -376,6 +376,16 @@ function loadFromId(id, opts = { isSecret: true }) {
   try {
     const payload = /** @type {any} */ (id.startsWith("t2-") ? decodeIdV2(id) : decodeId(id));
     const title = opts.title ?? "";
+    // Cache derived structures that don't change during play. Building these
+    // once at puzzle load avoids rebuilding them inside renderPuzzle, which
+    // can fire many times per second during drag.
+    const thermoByCell = new Map();
+    payload.thermos.forEach((/** @type {number[]} */ thermo, /** @type {number} */ thermoIndex) => {
+      thermo.forEach((/** @type {number} */ cell, /** @type {number} */ pathIndex) =>
+        thermoByCell.set(cell, { thermo, thermoIndex, pathIndex }));
+    });
+    const expectedTotal = payload.rowClues.reduce(
+      (/** @type {number} */ sum, /** @type {number} */ clue) => sum + clue, 0);
     state.puzzle = {
       shapeStyle: payload.shapeStyle,
       size: payload.size,
@@ -391,7 +401,17 @@ function loadFromId(id, opts = { isSecret: true }) {
       id,
       title,
       isSecret: opts.isSecret !== false,
+      thermoByCell,
+      expectedTotal,
     };
+    // Grid template CSS only depends on size — set it once per puzzle load.
+    const sizeRepeat = `repeat(${payload.size}, var(--cell))`;
+    els.colClues.style.gridTemplateColumns = sizeRepeat;
+    els.rowClues.style.gridTemplateRows = sizeRepeat;
+    els.rowCluesRight.style.gridTemplateRows = sizeRepeat;
+    els.board.style.gridTemplateColumns = sizeRepeat;
+    els.board.style.gridTemplateRows = sizeRepeat;
+    els.board.parentElement.parentElement.style.setProperty("--grid-size", payload.size);
     if (state.puzzle.isSecret) localStorage.setItem("thermogift:lastPuzzle", id);
     loadProgress();
     clearCreatorLink();
@@ -539,19 +559,18 @@ function renderPuzzle() {
   const puzzle = state.puzzle;
   if (!puzzle) return;
 
-  els.colClues.style.gridTemplateColumns = `repeat(${puzzle.size}, var(--cell))`;
-  els.rowClues.style.gridTemplateRows = `repeat(${puzzle.size}, var(--cell))`;
-  els.rowCluesRight.style.gridTemplateRows = `repeat(${puzzle.size}, var(--cell))`;
-  els.board.style.gridTemplateColumns = `repeat(${puzzle.size}, var(--cell))`;
-  els.board.style.gridTemplateRows = `repeat(${puzzle.size}, var(--cell))`;
-  els.board.parentElement.parentElement.style.setProperty("--grid-size", puzzle.size);
+  // Grid template CSS is set once at puzzle load — no need to redo per render.
 
-  els.colClues.replaceChildren(...puzzle.colClues.map((clue, index) => clueEl(clue, columnCount(index), "col", index)));
-  els.rowClues.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index), "row", index)));
-  els.rowCluesRight.replaceChildren(...puzzle.rowClues.map((clue, index) => clueEl(clue, rowCount(index), "row", index)));
+  // Precompute current row/col counts once. Both clueEl and updateProgress
+  // need them; the old per-clue rowCount/columnCount calls were O(size²)
+  // total per render, all redundant with each other.
+  const counts = currentCounts(puzzle);
 
-  const thermoByCell = new Map();
-  puzzle.thermos.forEach((thermo, thermoIndex) => thermo.forEach((cell, pathIndex) => thermoByCell.set(cell, { thermo, thermoIndex, pathIndex })));
+  els.colClues.replaceChildren(...puzzle.colClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.col[index], "col", index)));
+  els.rowClues.replaceChildren(...puzzle.rowClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.row[index], "row", index)));
+  els.rowCluesRight.replaceChildren(...puzzle.rowClues.map((/** @type {number} */ clue, /** @type {number} */ index) => clueEl(clue, counts.row[index], "row", index)));
+
+  const thermoByCell = puzzle.thermoByCell;
 
   const cells = Array.from({ length: puzzle.size * puzzle.size }, (_, index) => {
     const button = document.createElement("button");
@@ -618,8 +637,23 @@ function renderPuzzle() {
   });
   els.board.replaceChildren(...cells);
 
-  updateProgress();
+  updateProgress(counts);
   updateUndoButton();
+}
+
+// One pass over `state.marks` to derive per-row and per-col fill counts.
+// Replaces the previous pattern of calling rowCount(row) / columnCount(col)
+// separately from each consumer (clueEl, updateProgress, isSolved), which
+// each iterated O(size) cells per call.
+function currentCounts(/** @type {any} */ puzzle) {
+  const size = puzzle.size;
+  const row = new Array(size).fill(0);
+  const col = new Array(size).fill(0);
+  for (const cell of state.marks) {
+    row[(cell / size) | 0] += 1;
+    col[cell % size] += 1;
+  }
+  return { row, col };
 }
 
 function markMode(meta) {
@@ -878,24 +912,34 @@ function sniffSecretHref(secret) {
 
 function isSolved() {
   const puzzle = state.puzzle;
-  const rowsOk = puzzle.rowClues.every((clue, row) => rowCount(row) === clue);
-  const colsOk = puzzle.colClues.every((clue, col) => columnCount(col) === clue);
-  const thermosOk = puzzle.thermos.every((thermo) => {
-    const marks = thermo.map((cell) => state.marks.has(cell));
+  // Cheap precondition: total marks must equal the sum of all clues. If not,
+  // we can't possibly be solved — skip the per-row, per-col, per-thermo work.
+  if (state.marks.size !== puzzle.expectedTotal) return false;
+  const counts = currentCounts(puzzle);
+  for (let i = 0; i < puzzle.size; i += 1) {
+    if (counts.row[i] !== puzzle.rowClues[i]) return false;
+    if (counts.col[i] !== puzzle.colClues[i]) return false;
+  }
+  return puzzle.thermos.every((/** @type {number[]} */ thermo) => {
+    const marks = thermo.map((/** @type {number} */ cell) => state.marks.has(cell));
     const firstGap = marks.indexOf(false);
     return firstGap === -1 || marks.slice(firstGap + 1).every((mark) => !mark);
   });
-  return rowsOk && colsOk && thermosOk;
 }
 
-function updateProgress() {
+function updateProgress(/** @type {{row: number[], col: number[]} | undefined} */ precomputed) {
   const puzzle = state.puzzle;
-  const target = puzzle.rowClues.reduce((sum, clue) => sum + clue, 0);
+  const counts = precomputed ?? currentCounts(puzzle);
+  const target = puzzle.expectedTotal;
   const filled = state.marks.size;
-  const anyOver = puzzle.rowClues.some((clue, row) => rowCount(row) > clue) ||
-    puzzle.colClues.some((clue, col) => columnCount(col) > clue);
-  const countsMatched = puzzle.rowClues.every((clue, row) => rowCount(row) === clue) &&
-    puzzle.colClues.every((clue, col) => columnCount(col) === clue);
+  let anyOver = false;
+  let countsMatched = true;
+  for (let i = 0; i < puzzle.size; i += 1) {
+    if (counts.row[i] > puzzle.rowClues[i]) anyOver = true;
+    if (counts.col[i] > puzzle.colClues[i]) anyOver = true;
+    if (counts.row[i] !== puzzle.rowClues[i]) countsMatched = false;
+    if (counts.col[i] !== puzzle.colClues[i]) countsMatched = false;
+  }
 
   if (anyOver) {
     els.progressText.textContent = "Check mistakes";
@@ -1016,22 +1060,5 @@ function axisFullyResolved(axis, index) {
   }
   return true;
 }
-
-function rowCount(row) {
-  let count = 0;
-  for (let col = 0; col < state.puzzle.size; col += 1) {
-    if (state.marks.has(row * state.puzzle.size + col)) count += 1;
-  }
-  return count;
-}
-
-function columnCount(col) {
-  let count = 0;
-  for (let row = 0; row < state.puzzle.size; row += 1) {
-    if (state.marks.has(row * state.puzzle.size + col)) count += 1;
-  }
-  return count;
-}
-
 
 loadFromLocation();
