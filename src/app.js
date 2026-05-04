@@ -1,5 +1,6 @@
 import {
   PRESETS,
+  availableShapesFor,
   decodeId,
   decodeCode,
   solutionKey,
@@ -136,8 +137,30 @@ const savedNewShape = localStorage.getItem("thermogift:newShapeStyle");
 if (savedNewShape && [...els.newShapeStyle.options].some((opt) => opt.value === savedNewShape)) {
   els.newShapeStyle.value = savedNewShape;
 }
+
+// Both shape options stay selectable. When shape changes, grey out difficulty
+// options the constructive generator can't reach in that shape and bump the
+// selection to the largest still-allowed difficulty.
+function syncDifficultyOptionsForShape() {
+  const shape = els.newShapeStyle.value;
+  let lastAllowed = null;
+  for (const opt of els.newDifficulty.options) {
+    const ok = availableShapesFor(opt.value).includes(shape);
+    opt.disabled = !ok;
+    if (ok) lastAllowed = opt.value;
+  }
+  const currentOpt = [...els.newDifficulty.options].find((o) => o.value === els.newDifficulty.value);
+  if ((!currentOpt || currentOpt.disabled) && lastAllowed) {
+    els.newDifficulty.value = lastAllowed;
+  }
+}
+syncDifficultyOptionsForShape();
+
 els.newDifficulty.addEventListener("change", () => localStorage.setItem("thermogift:newDifficulty", els.newDifficulty.value));
-els.newShapeStyle.addEventListener("change", () => localStorage.setItem("thermogift:newShapeStyle", els.newShapeStyle.value));
+els.newShapeStyle.addEventListener("change", () => {
+  localStorage.setItem("thermogift:newShapeStyle", els.newShapeStyle.value);
+  syncDifficultyOptionsForShape();
+});
 
 els.newPuzzle.addEventListener("click", () => {
   generateFreshPuzzle(els.newDifficulty.value, els.newShapeStyle.value);

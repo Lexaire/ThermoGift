@@ -1,17 +1,13 @@
 import {
   PRESETS,
-  buildThermometers,
-  generateFillLengths,
-  solutionFromLengths,
-  buildSolverContext,
-  countSolutionsCtx,
+  availableShapesFor,
   countsByRow,
   countsByCol,
-  isUsableClueSet,
   encodeIdV2,
   solutionKeyBytes,
   checksumForBytes,
 } from "./generator.js";
+import { constructPuzzle } from "./constructive.js";
 
 self.addEventListener("message", (event) => {
   try {
@@ -42,29 +38,22 @@ self.addEventListener("message", (event) => {
 
 function createPuzzle(presetId, shapeStyle = "") {
   const preset = PRESETS[presetId] ?? PRESETS.normal;
-  const config = { ...preset, shapeStyle: shapeStyle || preset.shapeStyle };
-  const fillAttempts = config.fillAttempts ?? 4;
-
-  for (let attempt = 0; attempt < config.attempts; attempt += 1) {
-    const thermos = buildThermometers(config.size, config.minThermos, Math.random, config.shapeStyle, config);
-    const ctx = buildSolverContext(thermos, config.size);
-
-    for (let fillAttempt = 0; fillAttempt < fillAttempts; fillAttempt += 1) {
-      const fillLengths = generateFillLengths(thermos, Math.random);
-      const solution = solutionFromLengths(config.size, thermos, fillLengths);
-      const rowClues = countsByRow(solution, config.size);
-      const colClues = countsByCol(solution, config.size);
-
-      if (isUsableClueSet(rowClues, colClues, config.size) && countSolutionsCtx(ctx, rowClues, colClues, 2, config.maxNodes) === 1) {
-        return {
-          size: config.size,
-          shapeStyle: config.shapeStyle,
-          thermos,
-          fillLengths,
-          solution,
-        };
-      }
-    }
+  const resolvedShape = shapeStyle || preset.shapeStyle;
+  if (!availableShapesFor(presetId).includes(resolvedShape)) {
+    throw new Error(`${preset.label} doesn't support ${resolvedShape} thermos`);
   }
-  throw new Error("Could not create a unique puzzle");
+  const result = constructPuzzle(preset.size, resolvedShape, {
+    minLength: preset.minLength,
+    maxLength: preset.maxLength,
+    minThermos: preset.minThermos,
+    layoutAttempts: Math.max(50, Math.floor((preset.deadlineMs ?? 5000) / 50)),
+  });
+  if (!result) throw new Error("Could not create a unique puzzle");
+  return {
+    size: preset.size,
+    shapeStyle: resolvedShape,
+    thermos: result.thermos,
+    fillLengths: result.fills,
+    solution: result.solution,
+  };
 }
