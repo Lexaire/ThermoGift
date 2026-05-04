@@ -291,7 +291,9 @@ export function constructForLayout(thermos, size, opts = {}) {
     preferLength2 = true,
     rng = Math.random,
     useSac = true,
+    deadlineMs,
   } = opts;
+  const moveOpts = { preferLength2 };
   const idx = buildLineIndex(thermos, size);
   const { lines } = idx;
   const ctx = buildSolverContext(thermos, size);
@@ -330,6 +332,9 @@ export function constructForLayout(thermos, size, opts = {}) {
   };
 
   while (true) {
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+      throw new Error("Generation took too long, try again");
+    }
     if (propagate(domain, lines, committed) < 0) {
       if (!tryBacktrack()) return null;
       continue;
@@ -368,7 +373,7 @@ export function constructForLayout(thermos, size, opts = {}) {
       continue;
     }
 
-    let result = findMoves(domain, lines, committed, sizes, size, { preferLength2, requireForcing: true, topK: 4 });
+    let result = findMoves(domain, lines, committed, sizes, size, { ...moveOpts, requireForcing: true, topK: 4 });
     if (result && result.contradiction) { if (!tryBacktrack()) return null; continue; }
     if (!result || result.moves.length === 0) {
       // SAC fallback: BC stalled but SAC may prune globally infeasible values
@@ -382,7 +387,7 @@ export function constructForLayout(thermos, size, opts = {}) {
         if (sacCode < 0) { if (!tryBacktrack()) return null; continue; }
         if (sacCode > 0) continue;
       }
-      result = findMoves(domain, lines, committed, sizes, size, { preferLength2, requireForcing: false, topK: 4 });
+      result = findMoves(domain, lines, committed, sizes, size, { ...moveOpts, requireForcing: false, topK: 4 });
       if (!result || result.contradiction || result.moves.length === 0) {
         if (!tryBacktrack()) return null;
         continue;
@@ -402,14 +407,19 @@ export function constructPuzzle(size, shapeStyle, opts = {}) {
     layoutAttempts = 30,
     rng = Math.random,
     useSac = true,
+    deadlineMs,
   } = opts;
   const layoutConfig = { minLength };
   if (maxLength !== undefined) layoutConfig.maxLength = maxLength;
+  const layoutOpts = { rng, useSac, deadlineMs };
   for (let attempt = 0; attempt < layoutAttempts; attempt += 1) {
+    if (deadlineMs !== undefined && Date.now() > deadlineMs) {
+      throw new Error("Generation took too long, try again");
+    }
     let thermos;
     try { thermos = buildThermometers(size, minThermos, rng, shapeStyle, layoutConfig); }
     catch { continue; }
-    const result = constructForLayout(thermos, size, { rng, useSac });
+    const result = constructForLayout(thermos, size, layoutOpts);
     if (result) return result;
   }
   return null;

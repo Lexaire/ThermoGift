@@ -15,7 +15,7 @@ self.addEventListener("message", (event) => {
     if (typeof code !== "string") throw new Error("Bad code");
     const secretBytes = new TextEncoder().encode(code);
     if (secretBytes.length > 4096) throw new Error("Code too long (max 4096 UTF-8 bytes)");
-    const puzzle = createPuzzle(presetId, shapeStyle);
+    const puzzle = createPuzzle(presetId, shapeStyle, Date.now() + 15000);
     const key = solutionKeyBytes(puzzle.solution, puzzle.size, secretBytes.length);
     const cipherBytes = Array.from(secretBytes, (b, i) => b ^ key[i]);
     const checksum = checksumForBytes(secretBytes, puzzle.solution, puzzle.size);
@@ -36,7 +36,7 @@ self.addEventListener("message", (event) => {
   }
 });
 
-function createPuzzle(presetId, shapeStyle = "") {
+function createPuzzle(/** @type {any} */ presetId, /** @type {any} */ shapeStyle = "", /** @type {number | undefined} */ deadlineMs) {
   const preset = PRESETS[presetId] ?? PRESETS.normal;
   const resolvedShape = shapeStyle || preset.shapeStyle;
   if (!availableShapesFor(presetId).includes(resolvedShape)) {
@@ -47,6 +47,7 @@ function createPuzzle(presetId, shapeStyle = "") {
     maxLength: preset.maxLength,
     minThermos: preset.minThermos,
     layoutAttempts: Math.max(50, Math.floor((preset.deadlineMs ?? 5000) / 50)),
+    deadlineMs,
   });
   if (!result) throw new Error("Could not create a unique puzzle");
   return {
