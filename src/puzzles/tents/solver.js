@@ -402,18 +402,32 @@ function easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, siz
   return iterations < maxIterations;
 }
 
-export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty = "easy") {
+// Returns analysis of a BC-deduction run:
+//   ok                  - true iff the deducer fully solved the puzzle.
+//   unknownAfterEasy    - number of UNKNOWN cells once easy propagation
+//                         exhausted itself.
+//   lookaheadCommits    - number of cells committed by 1-step lookahead
+//                         (only relevant when difficulty === "hard").
+// Used by the generator to gate Hard puzzles on the *quantity* of
+// lookahead reasoning required, not just whether any was required —
+// without that gate, "Hard" often only needs lookahead at one cell and
+// the rest cascades from BC, which feels exactly like Easy.
+export function bcAnalyze(trees, tents, rowClues, colClues, size, difficulty = "easy") {
   const domain = buildInitialDomain(trees, size);
   const treeList = [...trees];
   const treeAdj = treeList.map(tree => orthogonalNeighbors(tree, size).filter(c => !trees.has(c)));
 
-  if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+  if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) {
+    return { ok: false, unknownAfterEasy: 0, lookaheadCommits: 0 };
+  }
 
+  let unknownAfterEasy = 0;
+  for (let cell = 0; cell < size * size; cell++) {
+    if (domain[cell] === UNKNOWN) unknownAfterEasy++;
+  }
+
+  let lookaheadCommits = 0;
   if (difficulty === "hard") {
-    // 1-step lookahead (trial elimination): for each UNKNOWN cell, hypothesize
-    // TENT and EMPTY and run easy propagation. If a hypothesis leads to a
-    // contradiction (including via the tree-pair contradiction rule above),
-    // commit the opposite value. Loop until no progress.
     const N = size * size;
     let progress = true;
     while (progress) {
@@ -426,7 +440,10 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty
         const tentOk = easyPropagate(tryT, trees, treeList, treeAdj, rowClues, colClues, size);
         if (!tentOk) {
           domain[cell] = EMPTY;
-          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+          lookaheadCommits++;
+          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) {
+            return { ok: false, unknownAfterEasy, lookaheadCommits };
+          }
           progress = true;
           continue;
         }
@@ -436,7 +453,10 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty
         const emptyOk = easyPropagate(tryE, trees, treeList, treeAdj, rowClues, colClues, size);
         if (!emptyOk) {
           domain[cell] = TENT;
-          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) return false;
+          lookaheadCommits++;
+          if (!easyPropagate(domain, trees, treeList, treeAdj, rowClues, colClues, size)) {
+            return { ok: false, unknownAfterEasy, lookaheadCommits };
+          }
           progress = true;
         }
       }
@@ -446,9 +466,13 @@ export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty
   for (let cell = 0; cell < size * size; cell++) {
     if (trees.has(cell)) continue;
     const expected = tents.has(cell) ? TENT : EMPTY;
-    if (domain[cell] !== expected) return false;
+    if (domain[cell] !== expected) return { ok: false, unknownAfterEasy, lookaheadCommits };
   }
-  return true;
+  return { ok: true, unknownAfterEasy, lookaheadCommits };
+}
+
+export function isBCDeducible(trees, tents, rowClues, colClues, size, difficulty = "easy") {
+  return bcAnalyze(trees, tents, rowClues, colClues, size, difficulty).ok;
 }
 
 export function rulesSatisfied(trees, tents, rowClues, colClues, size) {
