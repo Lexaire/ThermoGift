@@ -67,11 +67,13 @@ function puzzleLabel(puzzle) {
 const tents = {
   id: "tents",
   variant: T2_VARIANT,
-  rulesText: "Place a tent next to each tree. Each tent must be orthogonally adjacent (up, down, left, right) to its tree. Tents cannot touch each other, even diagonally. The numbers above and beside the grid tell how many tents belong in that column or row. Left-click to place or clear a tent. Right-click to mark an X.",
+  rulesText: "Place a tent next to each tree. Each tent must be orthogonally adjacent (up, down, left, right) to its tree. Tents cannot touch each other, even diagonally. Trees can have more than one adjacent tent. The numbers above and beside the grid tell how many tents belong in that column or row. Left-click to place or clear a tent. Right-click to mark grass.",
   settingsSchema: [
     { id: "settingTentsDimClues", key: "thermogift:assist:tents:dimMatchedClues", label: "Dim row and column clues when met", desc: "Greys out a clue once its row or column count matches.", defaultOn: true },
-    { id: "settingTentsAutoX", key: "thermogift:assist:tents:autoXAroundTents", label: "Auto-fill X around tents", desc: "When you place a tent, mark X on the eight surrounding cells.", defaultOn: true },
-    { id: "settingTentsAutoFloodX", key: "thermogift:assist:tents:autoFloodXOnClueMet", label: "Auto-flood X when clue is met", desc: "When a row or column has all its tents placed, fill the remaining empty cells with X.", defaultOn: false },
+    { id: "settingTentsAutoX", key: "thermogift:assist:tents:autoXAroundTents", label: "Auto-fill grass around tents", desc: "When you place a tent, mark grass on the eight surrounding cells.", defaultOn: true },
+    { id: "settingTentsAutoFloodX", key: "thermogift:assist:tents:autoFloodXOnClueMet", label: "Auto-flood grass when clue is met", desc: "When a row or column has all its tents placed, fill the remaining empty cells with grass.", defaultOn: false },
+    { id: "settingTentsAutoZeroX", key: "thermogift:assist:tents:autoZeroX", label: "Auto-fill lake on zero-clue rows and columns", desc: "When a puzzle loads, mark lake on every empty cell in any row or column whose clue is 0.", defaultOn: false },
+    { id: "settingTentsAutoNonAdjX", key: "thermogift:assist:tents:autoNonAdjX", label: "Auto-fill lake on cells not next to a tree", desc: "When a puzzle loads, mark lake on every cell that has no orthogonally adjacent tree.", defaultOn: false },
   ],
   presets: PRESETS,
   shapeStyles: SHAPE_STYLES,
@@ -84,8 +86,14 @@ const tents = {
     options: [
       { value: "easy", label: "Easy" },
       { value: "hard", label: "Hard" },
+      { value: "expert", label: "Expert" },
     ],
-    availableForPreset: () => ["easy", "hard"],
+    availableForPreset: (presetId) => {
+      const preset = PRESETS[presetId];
+      const tiers = ["easy", "hard"];
+      if (preset?.expertMinUnknownAfterEasy != null) tiers.push("expert");
+      return tiers;
+    },
   },
   decodeId,
   encode: encodeT2,

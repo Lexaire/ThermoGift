@@ -4,19 +4,41 @@ const TOUCH_MOVE_THRESHOLD_PX = 10;
 const SETTINGS_KEY_DIM_CLUES = "thermogift:assist:tents:dimMatchedClues";
 const SETTINGS_KEY_AUTO_X = "thermogift:assist:tents:autoXAroundTents";
 const SETTINGS_KEY_AUTO_FLOOD_X = "thermogift:assist:tents:autoFloodXOnClueMet";
+const SETTINGS_KEY_AUTO_ZERO_X = "thermogift:assist:tents:autoZeroX";
+const SETTINGS_KEY_AUTO_NON_ADJ_X = "thermogift:assist:tents:autoNonAdjX";
 
 function loadSettings() {
   return {
     dimMatchedClues: localStorage.getItem(SETTINGS_KEY_DIM_CLUES) !== "false",
     autoXAroundTents: localStorage.getItem(SETTINGS_KEY_AUTO_X) !== "false",
     autoFloodXOnClueMet: localStorage.getItem(SETTINGS_KEY_AUTO_FLOOD_X) === "true",
+    autoZeroX: localStorage.getItem(SETTINGS_KEY_AUTO_ZERO_X) === "true",
+    autoNonAdjX: localStorage.getItem(SETTINGS_KEY_AUTO_NON_ADJ_X) === "true",
   };
 }
 
 export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl, puzzle, stateApi }) {
   const windowHandlers = wireWindowHandlers(stateApi);
   const settings = loadSettings();
-  const settingsCleanup = wireSettingsInputs(settings, () => render());
+  const settingsCleanup = wireSettingsInputs(settings, () => render(), {
+    onAutoZeroXEnabled: () => { applyZeroClueAutoX(); render(); },
+    onAutoNonAdjXEnabled: () => { applyNonAdjacentAutoX(); render(); },
+    onAutoZeroXDisabled: rebuildLakesFromActiveAssists,
+    onAutoNonAdjXDisabled: rebuildLakesFromActiveAssists,
+  });
+
+  function rebuildLakesFromActiveAssists() {
+    if (stateApi.lakeMarks.size === 0) return;
+    stateApi.pushHistory();
+    stateApi.lakeMarks.clear();
+    if (settings.autoZeroX) applyZeroClueAutoX();
+    if (settings.autoNonAdjX) applyNonAdjacentAutoX();
+    stateApi.scheduleSave();
+    render();
+  }
+
+  if (settings.autoZeroX) applyZeroClueAutoX();
+  if (settings.autoNonAdjX) applyNonAdjacentAutoX();
 
   function render() {
     const counts = currentCounts(puzzle, stateApi.marks);
@@ -115,6 +137,9 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
     if (stateApi.xMarks.has(index)) {
       button.append(createGrassIcon());
     }
+    if (stateApi.lakeMarks.has(index)) {
+      button.append(createLakeIcon());
+    }
 
     return button;
   }
@@ -127,6 +152,7 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
       if (errorCells.has(index)) classes.push("tent-error");
     }
     if (stateApi.xMarks.has(index) && !isTree) classes.push("grass-marked");
+    if (stateApi.lakeMarks.has(index) && !isTree && !stateApi.marks.has(index)) classes.push("lake-marked");
     return classes.join(" ");
   }
 
@@ -137,12 +163,14 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
 
   function toggleTent(index, mode) {
     if (puzzle.trees.has(index)) return;
+    if (stateApi.lakeMarks.has(index)) return;
     if (mode === "fill") {
       stateApi.marks.add(index);
       stateApi.xMarks.delete(index);
+      stateApi.lakeMarks.delete(index);
       if (settings.autoXAroundTents) {
         for (const n of getNeighbors8(index, puzzle.size)) {
-          if (puzzle.trees.has(n) || stateApi.marks.has(n)) continue;
+          if (puzzle.trees.has(n) || stateApi.marks.has(n) || stateApi.lakeMarks.has(n)) continue;
           stateApi.xMarks.add(n);
         }
       }
@@ -157,20 +185,51 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
     stateApi.maybeReveal();
   }
 
+  function applyNonAdjacentAutoX() {
+    const size = puzzle.size;
+    let changed = false;
+    for (let idx = 0; idx < size * size; idx++) {
+      if (puzzle.trees.has(idx) || stateApi.marks.has(idx) || stateApi.xMarks.has(idx) || stateApi.lakeMarks.has(idx)) continue;
+      if (orthoNeighbors(idx, size).some(n => puzzle.trees.has(n))) continue;
+      stateApi.lakeMarks.add(idx);
+      changed = true;
+    }
+    if (changed) stateApi.scheduleSave();
+  }
+
+  function applyZeroClueAutoX() {
+    const size = puzzle.size;
+    let changed = false;
+    const markEmpty = (idx) => {
+      if (puzzle.trees.has(idx) || stateApi.marks.has(idx) || stateApi.xMarks.has(idx) || stateApi.lakeMarks.has(idx)) return;
+      stateApi.lakeMarks.add(idx);
+      changed = true;
+    };
+    for (let r = 0; r < size; r++) {
+      if (puzzle.rowClues[r] !== 0) continue;
+      for (let c = 0; c < size; c++) markEmpty(r * size + c);
+    }
+    for (let c = 0; c < size; c++) {
+      if (puzzle.colClues[c] !== 0) continue;
+      for (let r = 0; r < size; r++) markEmpty(r * size + c);
+    }
+    if (changed) stateApi.scheduleSave();
+  }
+
   function floodXIfClueMet(row, col) {
     const size = puzzle.size;
     const counts = currentCounts(puzzle, stateApi.marks);
     if (counts.row[row] === puzzle.rowClues[row]) {
       for (let c = 0; c < size; c++) {
         const idx = row * size + c;
-        if (puzzle.trees.has(idx) || stateApi.marks.has(idx)) continue;
+        if (puzzle.trees.has(idx) || stateApi.marks.has(idx) || stateApi.lakeMarks.has(idx)) continue;
         stateApi.xMarks.add(idx);
       }
     }
     if (counts.col[col] === puzzle.colClues[col]) {
       for (let r = 0; r < size; r++) {
         const idx = r * size + col;
-        if (puzzle.trees.has(idx) || stateApi.marks.has(idx)) continue;
+        if (puzzle.trees.has(idx) || stateApi.marks.has(idx) || stateApi.lakeMarks.has(idx)) continue;
         stateApi.xMarks.add(idx);
       }
     }
@@ -178,6 +237,7 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
 
   function toggleXMark(index) {
     if (puzzle.trees.has(index)) return;
+    if (stateApi.lakeMarks.has(index)) return;
     stateApi.pushHistory();
     const mode = stateApi.xMarks.has(index) ? "clear-x" : "x";
     toggleXMarkDirect(index, mode);
@@ -185,6 +245,7 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
 
   function toggleXMarkDirect(index, mode) {
     if (puzzle.trees.has(index)) return;
+    if (stateApi.lakeMarks.has(index)) return;
     if (mode === "x") {
       stateApi.xMarks.add(index);
       stateApi.marks.delete(index);
@@ -236,6 +297,10 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
   return {
     render,
     isSolved,
+    applyInitialAssists() {
+      if (settings.autoZeroX) applyZeroClueAutoX();
+      if (settings.autoNonAdjX) applyNonAdjacentAutoX();
+    },
     dispose() {
       settingsCleanup();
       windowHandlers();
@@ -268,8 +333,12 @@ function wireWindowHandlers(stateApi) {
   };
 }
 
-function wireSettingsInputs(settings, onChange) {
+/**
+ * @param {{onAutoZeroXEnabled?: () => void, onAutoNonAdjXEnabled?: () => void, onAutoZeroXDisabled?: () => void, onAutoNonAdjXDisabled?: () => void}} [lakeHandlers]
+ */
+function wireSettingsInputs(settings, onChange, lakeHandlers = {}) {
   const cleanups = [];
+  const { onAutoZeroXEnabled, onAutoNonAdjXEnabled, onAutoZeroXDisabled, onAutoNonAdjXDisabled } = lakeHandlers;
 
   const dim = document.querySelector("#settingTentsDimClues");
   if (dim) {
@@ -303,6 +372,34 @@ function wireSettingsInputs(settings, onChange) {
     };
     autoFlood.addEventListener("change", handler);
     cleanups.push(() => autoFlood.removeEventListener("change", handler));
+  }
+
+  const autoZero = /** @type {HTMLInputElement | null} */ (document.querySelector("#settingTentsAutoZeroX"));
+  if (autoZero) {
+    autoZero.checked = settings.autoZeroX;
+    const handler = () => {
+      const wasOn = settings.autoZeroX;
+      settings.autoZeroX = autoZero.checked;
+      localStorage.setItem(SETTINGS_KEY_AUTO_ZERO_X, String(settings.autoZeroX));
+      if (!wasOn && settings.autoZeroX && onAutoZeroXEnabled) onAutoZeroXEnabled();
+      if (wasOn && !settings.autoZeroX && onAutoZeroXDisabled) onAutoZeroXDisabled();
+    };
+    autoZero.addEventListener("change", handler);
+    cleanups.push(() => autoZero.removeEventListener("change", handler));
+  }
+
+  const autoNonAdj = /** @type {HTMLInputElement | null} */ (document.querySelector("#settingTentsAutoNonAdjX"));
+  if (autoNonAdj) {
+    autoNonAdj.checked = settings.autoNonAdjX;
+    const handler = () => {
+      const wasOn = settings.autoNonAdjX;
+      settings.autoNonAdjX = autoNonAdj.checked;
+      localStorage.setItem(SETTINGS_KEY_AUTO_NON_ADJ_X, String(settings.autoNonAdjX));
+      if (!wasOn && settings.autoNonAdjX && onAutoNonAdjXEnabled) onAutoNonAdjXEnabled();
+      if (wasOn && !settings.autoNonAdjX && onAutoNonAdjXDisabled) onAutoNonAdjXDisabled();
+    };
+    autoNonAdj.addEventListener("change", handler);
+    cleanups.push(() => autoNonAdj.removeEventListener("change", handler));
   }
 
   return () => cleanups.forEach(fn => fn());
@@ -470,4 +567,25 @@ function svgPath(d, className) {
   path.setAttribute("d", d);
   path.setAttribute("fill", "none");
   return path;
+}
+
+function createLakeIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "lake-icon");
+  svg.setAttribute("viewBox", "0 0 48 48");
+  svg.setAttribute("aria-hidden", "true");
+
+  const ns = "http://www.w3.org/2000/svg";
+
+  // Organic pond — top-down view, gently irregular
+  const puddle = document.createElementNS(ns, "path");
+  puddle.setAttribute("class", "lake-puddle");
+  puddle.setAttribute("d", "M6 24 C5 16 14 9 22 10 C30 9 41 13 43 22 C45 30 39 38 30 39 C22 40 13 38 8 33 C5 30 6 27 6 24 Z");
+  svg.append(puddle);
+
+  // Wave ripples on the surface
+  svg.append(svgPath("M14 22 Q19 19 24 22 T34 22", "lake-wave"));
+  svg.append(svgPath("M16 30 Q21 27 26 30 T34 30", "lake-wave"));
+
+  return svg;
 }

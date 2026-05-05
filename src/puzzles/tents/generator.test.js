@@ -28,15 +28,19 @@ function generateAndCheck(presetId, count, seed, difficulty = "easy") {
       `${presetId} ${difficulty} attempt ${i} unique`
     ).toBe(1);
 
+    // Expert puzzles use hard-tier deduction internally — the difference
+    // is in selection (tighter ratio + unknownAfterEasy floor), not in
+    // technique. So both Hard and Expert must pass "hard" deduction.
+    const deductionTier = difficulty === "expert" ? "hard" : difficulty;
     expect(
-      isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size, difficulty),
+      isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size, deductionTier),
       `${presetId} ${difficulty} attempt ${i} deducible at tier`
     ).toBe(true);
 
-    if (difficulty === "hard") {
+    if (difficulty === "hard" || difficulty === "expert") {
       expect(
         isBCDeducible(puzzle.trees, puzzle.tents, puzzle.rowClues, puzzle.colClues, puzzle.size, "easy"),
-        `${presetId} hard attempt ${i} not solvable at easy tier`
+        `${presetId} ${difficulty} attempt ${i} not solvable at easy tier`
       ).toBe(false);
     }
   }
@@ -56,6 +60,14 @@ describe("tents generator produces hard-tier puzzles", () => {
   test("8x8 hard", () => generateAndCheck("8x8", 2, 0x80808E, "hard"));
   test("10x10 hard", () => generateAndCheck("10x10", 2, 0xA0A0A0, "hard"));
   test("15x15 hard", () => generateAndCheck("15x15", 1, 0xF0F0F0, "hard"));
+});
+
+describe("tents generator produces expert-tier puzzles", () => {
+  // 5×5 has Expert disabled — board too constrained.
+  test("6x6 expert", () => generateAndCheck("6x6", 2, 0xE6E6E6, "expert"));
+  test("8x8 expert", () => generateAndCheck("8x8", 2, 0xE8E8E8, "expert"));
+  test("10x10 expert", () => generateAndCheck("10x10", 1, 0xEAEAEA, "expert"));
+  test("15x15 expert", () => generateAndCheck("15x15", 1, 0xEFEFEF, "expert"));
 });
 
 test("encode + decode round-trips", () => {

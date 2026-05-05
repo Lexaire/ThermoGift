@@ -20,6 +20,15 @@ import { PRESETS } from "./presets.js";
 // the distribution shape.)
 const HARD_LOOKAHEAD_RATIO_MIN = 0.25;
 
+// Expert raises the bar: top decile-ish of the natural ratio distribution
+// AND a higher per-size unknown floor (set in PRESETS). Same deduction
+// tier as Hard (1-step lookahead — 2-step adds zero qualifying puzzles
+// at sizes ≤10×10 in random placement); the difference is in selection.
+// Natural max ratio is ~0.33 across most sizes, so 0.30 is near the cap;
+// at 15×15 random placement tops out around 0.28 in modest sample sizes
+// but with the 1000× attempt multiplier we reliably find 0.30+ layouts.
+const EXPERT_LOOKAHEAD_RATIO_MIN = 0.30;
+
 function placeTreesRandomly(size, count, rng) {
   const cells = Array.from({ length: size * size }, (_, i) => i);
   return new Set(shuffled(cells, rng).slice(0, count));
@@ -34,10 +43,12 @@ export function constructTentsPuzzle(presetOrId, opts = {}) {
   const size = preset.size;
   const numTrees = Math.round(size * size * preset.treeDensity);
   const difficulty = opts.difficulty ?? "easy";
-  // Hard tier passes a stack of filters (fail easy + ratio ≥ 0.25 + min
+  // Hard/Expert pass a stack of filters (fail easy + ratio gate + min
   // unknownAfterEasy), so the natural hit rate is well under 0.1% of
-  // random layouts at most sizes. The deadline still caps wall time.
-  const layoutAttempts = preset.layoutAttempts * (difficulty === "hard" ? 300 : 1);
+  // random layouts at most sizes — Expert is even narrower. The deadline
+  // still caps wall time.
+  const attemptMultiplier = difficulty === "expert" ? 1000 : difficulty === "hard" ? 300 : 1;
+  const layoutAttempts = preset.layoutAttempts * attemptMultiplier;
 
   for (let attempt = 0; attempt < layoutAttempts; attempt++) {
     if (Date.now() > deadlineMs) throw new Error("Generation took too long, try again");
@@ -51,7 +62,7 @@ export function constructTentsPuzzle(presetOrId, opts = {}) {
 
     if (countTentSolutions(trees, rowClues, colClues, size, 2) !== 1) continue;
 
-    if (difficulty === "hard") {
+    if (difficulty === "hard" || difficulty === "expert") {
       const result = bcAnalyze(trees, tents, rowClues, colClues, size, "hard");
       if (!result.ok) continue;
       // Easy-tier deduction must FAIL — otherwise the puzzle isn't hard at
@@ -60,11 +71,18 @@ export function constructTentsPuzzle(presetOrId, opts = {}) {
       // The board has to start "fat": enough cells must remain UNKNOWN
       // after easy propagation that the player can't just fill grass and
       // see the answer fall out.
-      if (result.unknownAfterEasy < (preset.hardMinUnknownAfterEasy ?? 0)) continue;
+      const minUnknown = difficulty === "expert"
+        ? preset.expertMinUnknownAfterEasy
+        : preset.hardMinUnknownAfterEasy;
+      if (minUnknown == null) continue; // Expert disabled at this size
+      if (result.unknownAfterEasy < minUnknown) continue;
       // And the lookahead has to handle a meaningful share of the unknowns,
       // not just one corner.
+      const ratioMin = difficulty === "expert"
+        ? EXPERT_LOOKAHEAD_RATIO_MIN
+        : HARD_LOOKAHEAD_RATIO_MIN;
       if (result.unknownAfterEasy === 0
-          || result.lookaheadCommits / result.unknownAfterEasy < HARD_LOOKAHEAD_RATIO_MIN) continue;
+          || result.lookaheadCommits / result.unknownAfterEasy < ratioMin) continue;
     } else {
       if (!isBCDeducible(trees, tents, rowClues, colClues, size, difficulty)) continue;
     }

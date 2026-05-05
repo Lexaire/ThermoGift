@@ -18,16 +18,17 @@ const MODULES = { thermometers, tents };
 const VARIANT_TO_MODULE = { [thermometers.variant]: thermometers, [tents.variant]: tents };
 const DEFAULT_MODULE = thermometers;
 
-/** @typedef {{ marks: number[], xMarks: number[] }} HistorySnapshot */
+/** @typedef {{ marks: number[], xMarks: number[], lakeMarks: number[] }} HistorySnapshot */
 /** @typedef {{ kind: "mark" | "xMark", mode: string }} DragState */
 
-/** @type {{ puzzle: any, module: any, ui: any, marks: Set<number>, xMarks: Set<number>, history: HistorySnapshot[], dragging: DragState | null, touchPending: any, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean }} */
+/** @type {{ puzzle: any, module: any, ui: any, marks: Set<number>, xMarks: Set<number>, lakeMarks: Set<number>, history: HistorySnapshot[], dragging: DragState | null, touchPending: any, lastCreatedId: string | null, lastCreatedTitle: string, generatingFresh: boolean }} */
 const state = {
   puzzle: null,
   module: null,
   ui: null,
   marks: new Set(),
   xMarks: new Set(),
+  lakeMarks: new Set(),
   history: [],
   dragging: null,
   touchPending: null,
@@ -350,9 +351,11 @@ els.resetPuzzle.addEventListener("click", () => {
   };
 
   yes.addEventListener("click", () => {
-    if (state.marks.size > 0 || state.xMarks.size > 0) pushHistory();
+    if (state.marks.size > 0 || state.xMarks.size > 0 || state.lakeMarks.size > 0) pushHistory();
     state.marks.clear();
     state.xMarks.clear();
+    state.lakeMarks.clear();
+    state.ui?.applyInitialAssists?.();
     saveProgress();
     renderPuzzle();
     dismiss();
@@ -376,7 +379,7 @@ els.resetPuzzle.addEventListener("click", () => {
 els.undoMove.addEventListener("click", undo);
 
 function pushHistory() {
-  state.history.push({ marks: [...state.marks], xMarks: [...state.xMarks] });
+  state.history.push({ marks: [...state.marks], xMarks: [...state.xMarks], lakeMarks: [...state.lakeMarks] });
   if (state.history.length > HISTORY_LIMIT) state.history.shift();
 }
 
@@ -385,6 +388,7 @@ function undo() {
   if (!previous) return;
   state.marks = new Set(previous.marks);
   state.xMarks = new Set(previous.xMarks);
+  state.lakeMarks = new Set(previous.lakeMarks ?? []);
   saveProgress();
   renderPuzzle();
 }
@@ -490,6 +494,7 @@ function makeStateApi() {
   return {
     get marks() { return state.marks; },
     get xMarks() { return state.xMarks; },
+    get lakeMarks() { return state.lakeMarks; },
     get dragging() { return state.dragging; },
     set dragging(value) { state.dragging = value; },
     get touchPending() { return state.touchPending; },
@@ -780,6 +785,7 @@ function saveProgress() {
   localStorage.setItem(key, JSON.stringify({
     marks: [...state.marks],
     xMarks: [...state.xMarks],
+    lakeMarks: [...state.lakeMarks],
   }));
   localStorage.setItem("thermogift:lastPlayed", state.puzzle.id);
 }
@@ -787,6 +793,7 @@ function saveProgress() {
 function loadProgress() {
   state.marks.clear();
   state.xMarks.clear();
+  state.lakeMarks.clear();
   clearHistory();
   const key = progressKey();
   if (!key) return;
@@ -802,6 +809,11 @@ function loadProgress() {
     if (Array.isArray(saved.xMarks)) {
       saved.xMarks.forEach((cell) => {
         if (Number.isInteger(cell) && cell >= 0 && cell < max && !state.marks.has(cell)) state.xMarks.add(cell);
+      });
+    }
+    if (Array.isArray(saved.lakeMarks)) {
+      saved.lakeMarks.forEach((cell) => {
+        if (Number.isInteger(cell) && cell >= 0 && cell < max && !state.marks.has(cell) && !state.xMarks.has(cell)) state.lakeMarks.add(cell);
       });
     }
   } catch (error) {
