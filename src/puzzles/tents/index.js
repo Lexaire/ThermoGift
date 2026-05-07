@@ -67,8 +67,9 @@ function puzzleLabel(puzzle) {
 const tents = {
   id: "tents",
   variant: T2_VARIANT,
-  rulesText: "Place a tent next to each tree. Each tent must be orthogonally adjacent (up, down, left, right) to its tree. Tents cannot touch each other, even diagonally. Trees can have more than one adjacent tent. The numbers above and beside the grid tell how many tents belong in that column or row. Left-click to place or clear a tent. Right-click to mark grass.",
+  rulesText: "Pair each tree with exactly one tent in an orthogonally adjacent cell (up, down, left, right). Each tent belongs to one tree, though a tree may sit beside other trees' tents too. Tents cannot touch each other, even diagonally. The numbers above and beside the grid tell how many tents belong in that column or row. Left-click to place or clear a tent. Right-click to mark grass.",
   settingsSchema: [
+    { id: "settingTentsHighlightMistakes", key: "thermogift:assist:tents:highlightMistakes", label: "Highlight mistakes", desc: "Outline tents in red when they break a rule, mark trees that can no longer get a tent, and flag rows or columns whose clue can no longer be reached.", defaultOn: true },
     { id: "settingTentsDimClues", key: "thermogift:assist:tents:dimMatchedClues", label: "Dim row and column clues when met", desc: "Greys out a clue once its row or column count matches.", defaultOn: true },
     { id: "settingTentsAutoX", key: "thermogift:assist:tents:autoXAroundTents", label: "Auto-fill grass around tents", desc: "When you place a tent, mark grass on the eight surrounding cells.", defaultOn: true },
     { id: "settingTentsAutoFloodX", key: "thermogift:assist:tents:autoFloodXOnClueMet", label: "Auto-flood grass when clue is met", desc: "When a row or column has all its tents placed, fill the remaining empty cells with grass.", defaultOn: false },

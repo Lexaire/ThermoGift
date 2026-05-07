@@ -1,6 +1,7 @@
 const LONG_PRESS_MS = 350;
 const TOUCH_MOVE_THRESHOLD_PX = 10;
 
+const SETTINGS_KEY_HIGHLIGHT_MISTAKES = "thermogift:assist:tents:highlightMistakes";
 const SETTINGS_KEY_DIM_CLUES = "thermogift:assist:tents:dimMatchedClues";
 const SETTINGS_KEY_AUTO_X = "thermogift:assist:tents:autoXAroundTents";
 const SETTINGS_KEY_AUTO_FLOOD_X = "thermogift:assist:tents:autoFloodXOnClueMet";
@@ -9,6 +10,7 @@ const SETTINGS_KEY_AUTO_NON_ADJ_X = "thermogift:assist:tents:autoNonAdjX";
 
 function loadSettings() {
   return {
+    highlightMistakes: localStorage.getItem(SETTINGS_KEY_HIGHLIGHT_MISTAKES) !== "false",
     dimMatchedClues: localStorage.getItem(SETTINGS_KEY_DIM_CLUES) !== "false",
     autoXAroundTents: localStorage.getItem(SETTINGS_KEY_AUTO_X) !== "false",
     autoFloodXOnClueMet: localStorage.getItem(SETTINGS_KEY_AUTO_FLOOD_X) === "true",
@@ -42,34 +44,40 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
 
   function render() {
     const counts = currentCounts(puzzle, stateApi.marks);
-    const errorCells = computeErrorCells();
+    const showMistakes = settings.highlightMistakes;
+    const errorCells = showMistakes ? computeErrorCells() : new Set();
+    const treeErrors = showMistakes ? computeTreeErrors() : new Set();
+    const capacities = showMistakes ? computeClueCapacities(puzzle, stateApi.xMarks, stateApi.lakeMarks) : null;
 
     colCluesEl.replaceChildren(...puzzle.colClues.map((clue, index) =>
-      clueEl(clue, counts.col[index])));
+      clueEl(clue, counts.col[index], capacities ? capacities.col[index] : null)));
     rowCluesEl.replaceChildren(...puzzle.rowClues.map((clue, index) =>
-      clueEl(clue, counts.row[index])));
+      clueEl(clue, counts.row[index], capacities ? capacities.row[index] : null)));
     rowCluesRightEl.replaceChildren(...puzzle.rowClues.map((clue, index) =>
-      clueEl(clue, counts.row[index])));
+      clueEl(clue, counts.row[index], capacities ? capacities.row[index] : null)));
 
-    const cells = Array.from({ length: puzzle.size * puzzle.size }, (_, index) => buildCell(index, errorCells));
+    const cells = Array.from({ length: puzzle.size * puzzle.size }, (_, index) => buildCell(index, errorCells, treeErrors));
     boardEl.replaceChildren(...cells);
 
     stateApi.updateProgress(counts);
   }
 
-  function clueEl(clue, count) {
+  function clueEl(clue, count, capacity) {
     const element = document.createElement("div");
-    const stateClass = count === clue ? (settings.dimMatchedClues ? "met" : "") : count > clue ? "over" : "";
+    const impossible = capacity !== null && capacity < clue && count !== clue;
+    const stateClass = impossible ? "impossible"
+      : count === clue ? (settings.dimMatchedClues ? "met" : "")
+      : count > clue ? "over" : "";
     element.className = `col-clue ${stateClass}`;
     element.textContent = String(clue);
     return element;
   }
 
-  function buildCell(index, errorCells) {
+  function buildCell(index, errorCells, treeErrors) {
     const button = document.createElement("button");
     button.type = "button";
     const isTree = puzzle.trees.has(index);
-    button.className = cellClass(index, isTree, errorCells);
+    button.className = cellClass(index, isTree, errorCells, treeErrors);
     button.ariaLabel = `Row ${Math.floor(index / puzzle.size) + 1}, column ${(index % puzzle.size) + 1}`;
 
     if (isTree) {
@@ -144,10 +152,12 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
     return button;
   }
 
-  function cellClass(index, isTree, errorCells) {
+  function cellClass(index, isTree, errorCells, treeErrors) {
     const classes = ["cell"];
-    if (isTree) classes.push("tree-cell");
-    else if (stateApi.marks.has(index)) {
+    if (isTree) {
+      classes.push("tree-cell");
+      if (treeErrors.has(index)) classes.push("tree-error");
+    } else if (stateApi.marks.has(index)) {
       classes.push("filled", "tent-cell");
       if (errorCells.has(index)) classes.push("tent-error");
     }
@@ -277,6 +287,10 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
     return hasValidPairing(puzzle.trees, stateApi.marks, size);
   }
 
+  function computeTreeErrors() {
+    return unmatchableTrees(puzzle, stateApi.xMarks, stateApi.lakeMarks);
+  }
+
   function computeErrorCells() {
     const errors = new Set();
     for (const tent of stateApi.marks) {
@@ -290,6 +304,9 @@ export function attachTentsUI({ boardEl, rowCluesEl, colCluesEl, rowCluesRightEl
       if (!orthoNeighbors(tent, puzzle.size).some(n => puzzle.trees.has(n))) {
         errors.add(tent);
       }
+    }
+    for (const tent of unpairableTents(puzzle, stateApi.marks)) {
+      errors.add(tent);
     }
     return errors;
   }
@@ -319,6 +336,26 @@ function currentCounts(puzzle, marks) {
   return { row, col };
 }
 
+/**
+ * Maximum tents each row/column could still hold given current blockers.
+ * A cell counts toward capacity unless it is a tree, grass (xMark), or lake.
+ * Existing tents count (the tent itself fills the cell).
+ */
+function computeClueCapacities(puzzle, xMarks, lakeMarks) {
+  const size = puzzle.size;
+  const row = new Array(size).fill(0);
+  const col = new Array(size).fill(0);
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) {
+      const idx = r * size + c;
+      if (puzzle.trees.has(idx) || xMarks.has(idx) || lakeMarks.has(idx)) continue;
+      row[r] += 1;
+      col[c] += 1;
+    }
+  }
+  return { row, col };
+}
+
 function wireWindowHandlers(stateApi) {
   const onUp = () => {
     stateApi.dragging = null;
@@ -339,6 +376,18 @@ function wireWindowHandlers(stateApi) {
 function wireSettingsInputs(settings, onChange, lakeHandlers = {}) {
   const cleanups = [];
   const { onAutoZeroXEnabled, onAutoNonAdjXEnabled, onAutoZeroXDisabled, onAutoNonAdjXDisabled } = lakeHandlers;
+
+  const highlight = /** @type {HTMLInputElement | null} */ (document.querySelector("#settingTentsHighlightMistakes"));
+  if (highlight) {
+    highlight.checked = settings.highlightMistakes;
+    const handler = () => {
+      settings.highlightMistakes = highlight.checked;
+      localStorage.setItem(SETTINGS_KEY_HIGHLIGHT_MISTAKES, String(settings.highlightMistakes));
+      onChange();
+    };
+    highlight.addEventListener("change", handler);
+    cleanups.push(() => highlight.removeEventListener("change", handler));
+  }
 
   const dim = document.querySelector("#settingTentsDimClues");
   if (dim) {
@@ -414,6 +463,131 @@ function orthoNeighbors(cell, size) {
   if (col > 0) result.push(cell - 1);
   if (col < size - 1) result.push(cell + 1);
   return result;
+}
+
+/**
+ * Returns the set of trees that cannot be paired with a tent (current or
+ * future) in any valid completion of the current board state. A tree's
+ * "candidates" are its orthogonal neighbors that are not already a tree,
+ * grass, or lake — i.e. cells that already hold a tent or are still open. If
+ * the tree has no candidate that matching can assign to it, it is flagged.
+ * This catches both the trivial "all neighbors blocked" case and the subtler
+ * case where the only remaining placed tent for the tree is needed by another
+ * tree.
+ */
+function unmatchableTrees(puzzle, xMarks, lakeMarks) {
+  const size = puzzle.size;
+  const treeToCands = new Map();
+  for (const tree of puzzle.trees) {
+    const cands = orthoNeighbors(tree, size).filter(n =>
+      !puzzle.trees.has(n) && !xMarks.has(n) && !lakeMarks.has(n));
+    treeToCands.set(tree, cands);
+  }
+
+  const treeMatch = new Map();
+  const candMatch = new Map();
+
+  function tryAugment(tree, visited) {
+    for (const cand of treeToCands.get(tree)) {
+      if (visited.has(cand)) continue;
+      visited.add(cand);
+      const current = candMatch.get(cand);
+      if (current === undefined || tryAugment(current, visited)) {
+        treeMatch.set(tree, cand);
+        candMatch.set(cand, tree);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  for (const tree of puzzle.trees) {
+    tryAugment(tree, new Set());
+  }
+
+  const errors = new Set();
+  const visitedCands = new Set();
+  const stack = [];
+  for (const tree of puzzle.trees) {
+    if (!treeMatch.has(tree)) {
+      errors.add(tree);
+      stack.push(tree);
+    }
+  }
+  while (stack.length > 0) {
+    const tree = stack.pop();
+    for (const cand of treeToCands.get(tree)) {
+      if (visitedCands.has(cand)) continue;
+      visitedCands.add(cand);
+      const matched = candMatch.get(cand);
+      if (matched !== undefined && !errors.has(matched)) {
+        errors.add(matched);
+        stack.push(matched);
+      }
+    }
+  }
+  return errors;
+}
+
+/**
+ * Returns the set of placed tents that cannot belong to any valid tree-tent
+ * pairing. Uses bipartite matching: a tent is flagged if it is unmatched in a
+ * maximum matching, or reachable from an unmatched tent via an alternating
+ * path (i.e. it could be the "extra" one in some max matching). Tents that
+ * appear in every max matching are not flagged, so a shared tent that
+ * legitimately belongs to a different tree stays clean.
+ */
+function unpairableTents(puzzle, marks) {
+  const size = puzzle.size;
+  const tentToTrees = new Map();
+  for (const tent of marks) {
+    const adjTrees = orthoNeighbors(tent, size).filter(n => puzzle.trees.has(n));
+    if (adjTrees.length > 0) tentToTrees.set(tent, adjTrees);
+  }
+
+  const tentMatch = new Map();
+  const treeMatch = new Map();
+
+  function tryAugment(tent, visited) {
+    for (const tree of tentToTrees.get(tent)) {
+      if (visited.has(tree)) continue;
+      visited.add(tree);
+      const current = treeMatch.get(tree);
+      if (current === undefined || tryAugment(current, visited)) {
+        tentMatch.set(tent, tree);
+        treeMatch.set(tree, tent);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  for (const tent of tentToTrees.keys()) {
+    tryAugment(tent, new Set());
+  }
+
+  const errors = new Set();
+  const visitedTrees = new Set();
+  const stack = [];
+  for (const tent of tentToTrees.keys()) {
+    if (!tentMatch.has(tent)) {
+      errors.add(tent);
+      stack.push(tent);
+    }
+  }
+  while (stack.length > 0) {
+    const tent = stack.pop();
+    for (const tree of tentToTrees.get(tent)) {
+      if (visitedTrees.has(tree)) continue;
+      visitedTrees.add(tree);
+      const matched = treeMatch.get(tree);
+      if (matched !== undefined && !errors.has(matched)) {
+        errors.add(matched);
+        stack.push(matched);
+      }
+    }
+  }
+  return errors;
 }
 
 function hasValidPairing(trees, marks, size) {
